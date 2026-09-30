@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en" data-game="pulse-runner">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Pulse Runner | Owais GameHub</title>
+<link rel="stylesheet" href="../_sdk/base.css" />
+<script src="../_sdk/sdk.js"></script>
+</head>
+<body>
+<div class="stage"><canvas id="c" aria-label="Pulse Runner endless runner"></canvas></div>
+<script>
+(function () {
+  var GH = GameHub, cv = document.getElementById("c"), W = 820, H = 420, c = GH.fit(cv, W, H);
+  var GROUND = 330, player, obs, speed, dist, state, spawnT, jumps, best, t = 0, far = [], near = [], dust = [];
+  for (var i = 0; i < 14; i++) far.push({ x: i * 70, h: GH.rand(60, 160), w: GH.rand(40, 70) });
+  for (var j = 0; j < 10; j++) near.push({ x: j * 100, h: GH.rand(40, 110), w: GH.rand(50, 90) });
+
+  function reset() {
+    player = { x: 120, y: GROUND - 38, w: 34, h: 38, vy: 0, ground: true };
+    obs = []; speed = 380; dist = 0; spawnT = 1.2; jumps = 0; state = "ready"; dust = [];
+    best = GH.best() || 0; GH.score(0);
+  }
+  function jump() {
+    if (GH.paused) return;
+    if (state === "over") { if (t > 0.4) reset(); return; }
+    if (state === "ready") state = "play";
+    if (player.ground || jumps < 2) {
+      player.vy = jumps === 0 ? -760 : -640; player.ground = false; jumps++;
+      GH.sound(jumps === 1 ? 480 : 720, 0.08, "square", 0.04, jumps === 1 ? 720 : 1000);
+    }
+  }
+  function spawn() {
+    var r = Math.random();
+    if (r < 0.45) obs.push({ x: W + 20, y: GROUND - 36, w: 28, h: 36, kind: "block" });
+    else if (r < 0.7) obs.push({ x: W + 20, y: GROUND - 64, w: 30, h: 64, kind: "tower" });
+    else if (r < 0.88) obs.push({ x: W + 20, y: GROUND - 34, w: 90, h: 34, kind: "wide" });
+    else obs.push({ x: W + 20, y: GROUND - 118, w: 60, h: 22, kind: "drone" });
+    var gap = Math.max(0.62, 1.35 - dist / 9000);
+    spawnT = GH.rand(gap, gap + 0.6);
+  }
+  function update(dt) {
+    t += dt;
+    var sp = state === "play" ? speed : 80;
+    far.forEach(function (b) { b.x -= sp * 0.15 * dt; if (b.x < -80) { b.x += 14 * 70; b.h = GH.rand(60, 160); } });
+    near.forEach(function (b) { b.x -= sp * 0.35 * dt; if (b.x < -100) { b.x += 10 * 100; b.h = GH.rand(40, 110); } });
+    dust.forEach(function (d) { d.x -= sp * dt * 0.6; d.life -= dt; });
+    dust = dust.filter(function (d) { return d.life > 0; });
+    if (state !== "play") return;
+    speed = Math.min(780, 380 + dist / 18);
+    dist += speed * dt / 10;
+    GH.score(Math.floor(dist));
+    player.vy += 2300 * dt; player.y += player.vy * dt;
+    if (player.y >= GROUND - player.h) {
+      if (!player.ground) for (var k = 0; k < 6; k++) dust.push({ x: player.x + GH.rand(0, 30), y: GROUND, life: 0.3 });
+      player.y = GROUND - player.h; player.vy = 0; player.ground = true; jumps = 0;
+    }
+    spawnT -= dt; if (spawnT <= 0) spawn();
+    obs.forEach(function (o) { o.x -= speed * dt; if (o.kind === "drone") o.y = GROUND - 118 + Math.sin(t * 5) * 10; });
+    obs = obs.filter(function (o) { return o.x > -120; });
+    var hb = { x: player.x + 4, y: player.y + 4, w: player.w - 8, h: player.h - 6 };
+    for (var i = 0; i < obs.length; i++) if (GH.hit(hb, obs[i])) {
+      state = "over"; t = 0; best = GH.gameOver(Math.floor(dist)).best;
+      GH.sound(150, 0.4, "sawtooth", 0.05, 50);
+      return;
+    }
+  }
+  function render() {
+    var sky = c.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, "#120b2e"); sky.addColorStop(0.7, "#2a0f3f"); sky.addColorStop(1, "#060510");
+    c.fillStyle = sky; c.fillRect(0, 0, W, H);
+    c.fillStyle = "#ff4fa3"; c.shadowBlur = 40; c.shadowColor = "#ff4fa3";
+    c.beginPath(); c.arc(W * 0.72, GROUND - 40, 90, Math.PI, 0); c.fill(); c.shadowBlur = 0;
+    c.fillStyle = "#1a0f33"; far.forEach(function (b) { c.fillRect(b.x, GROUND - b.h, b.w, b.h); });
+    c.fillStyle = "#241446";
+    near.forEach(function (b) {
+      c.fillRect(b.x, GROUND - b.h, b.w, b.h);
+      c.fillStyle = "rgba(255,200,87,0.35)";
+      for (var y = GROUND - b.h + 10; y < GROUND - 10; y += 16) for (var x = b.x + 8; x < b.x + b.w - 8; x += 14) if ((x * 7 + y * 3) % 5 < 2) c.fillRect(x, y, 5, 6);
+      c.fillStyle = "#241446";
+    });
+    c.fillStyle = "#07060f"; c.fillRect(0, GROUND, W, H - GROUND);
+    c.strokeStyle = "#40e0ff"; c.lineWidth = 2; c.shadowBlur = 12; c.shadowColor = "#40e0ff";
+    c.beginPath(); c.moveTo(0, GROUND); c.lineTo(W, GROUND); c.stroke(); c.shadowBlur = 0;
+    var off = (dist * 10) % 60;
+    c.strokeStyle = "rgba(64,224,255,0.18)"; c.lineWidth = 1;
+    for (var x = -off; x < W + 60; x += 60) { c.beginPath(); c.moveTo(x, GROUND); c.lineTo(W / 2 + (x - W / 2) * 2.4, H); c.stroke(); }
+    obs.forEach(function (o) {
+      var col = o.kind === "drone" ? "#ffc857" : o.kind === "tower" ? "#8b6bff" : "#ff4fa3";
+      c.shadowBlur = 14; c.shadowColor = col; c.fillStyle = col;
+      c.beginPath(); c.roundRect(o.x, o.y, o.w, o.h, 4); c.fill();
+    });
+    c.shadowBlur = 0;
+    dust.forEach(function (d) { c.globalAlpha = d.life * 3; c.fillStyle = "#b8f4ff"; c.fillRect(d.x, d.y - 3, 3, 3); });
+    c.globalAlpha = 1;
+    c.save(); c.translate(player.x + player.w / 2, player.y + player.h / 2);
+    if (!player.ground) c.rotate((t * 9) % (Math.PI * 2) * (jumps > 1 ? 1 : 0.3));
+    c.shadowBlur = 22; c.shadowColor = "#40e0ff"; c.fillStyle = "#40e0ff";
+    c.beginPath(); c.roundRect(-player.w / 2, -player.h / 2, player.w, player.h, 7); c.fill();
+    c.fillStyle = "#06070d"; c.fillRect(4, -8, 8, 6);
+    c.restore(); c.shadowBlur = 0;
+    GH.text(c, Math.floor(dist) + " m", 20, 30, 20, "#e8ebff", "left", 700);
+    GH.text(c, "Best " + best + " m", W - 20, 30, 15, "#8f96bf", "right");
+    if (state === "ready") GH.card(c, W, H, "Pulse Runner", "Space, Up arrow or tap to jump. Jump again in the air for a double jump.", "Press Space or tap to run");
+    if (state === "over") GH.card(c, W, H, "Wiped out", "You ran " + Math.floor(dist) + " m   Best " + best + " m", "Tap or press Space to run again");
+  }
+  window.addEventListener("keydown", function (e) {
+    if (e.key === " " || e.key === "ArrowUp" || e.key === "w") { e.preventDefault(); if (!e.repeat) jump(); }
+  });
+  cv.addEventListener("mousedown", jump);
+  cv.addEventListener("touchstart", function (e) { e.preventDefault(); jump(); }, { passive: false });
+  GH.on("restart", reset);
+  reset();
+  GH.loop(update, render);
+})();
+</script>
+</body>
+</html>

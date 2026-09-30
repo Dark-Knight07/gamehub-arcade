@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en" data-game="sudoku">
+<head>
+<!-- Offline edition from Owais GameHub. Open this file in any modern browser. -->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Sudoku | Owais GameHub</title>
+<style>
+/* Shared look for every Owais GameHub game */
+:root {
+  --bg: #06070d; --panel: #11142a; --edge: rgba(148, 163, 255, 0.18);
+  --ink: #e8ebff; --dim: #8f96bf; --cyan: #40e0ff; --violet: #8b6bff; --rose: #ff4fa3; --lime: #9dff6a; --amber: #ffc857;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 0%, #151a3a 0%, var(--bg) 70%); color: var(--ink);
+  font-family: "Sora Variable", "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+.stage { position: fixed; inset: 0; display: grid; place-items: center; }
+canvas { display: block; border-radius: 10px; box-shadow: 0 0 0 1px var(--edge), 0 30px 80px -30px rgba(64, 224, 255, 0.35); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.btn { border: 1px solid var(--edge); background: rgba(255, 255, 255, 0.05); padding: 10px 18px; border-radius: 10px; font-weight: 600; }
+.btn:hover { border-color: var(--cyan); }
+.btn.primary { background: linear-gradient(135deg, var(--cyan), var(--violet)); border: 0; color: #050612; }
+.btn.on { border-color: var(--cyan); background: rgba(64, 224, 255, 0.12); }
+.hud { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.stat { background: rgba(255, 255, 255, 0.04); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 14px; text-align: center; min-width: 84px; }
+.stat small { display: block; color: var(--dim); font-size: 11px; letter-spacing: .04em; }
+.stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.msg { min-height: 24px; text-align: center; color: var(--dim); font-size: 14px; }
+.panel { width: min(96vw, 560px); display: grid; gap: 16px; padding: 16px; }
+.title { margin: 0; text-align: center; font-size: 22px; letter-spacing: .02em; }
+.ogh-pause { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center;
+  background: rgba(6, 7, 13, 0.82); backdrop-filter: blur(6px); z-index: 99; cursor: pointer; }
+.ogh-pause strong { font-size: 32px; }
+.ogh-pause p { color: var(--dim); margin: 8px 0 0; }
+.ogh-pause .ogh-keys { font-size: 13px; }
+@media (max-height: 520px) { .panel { gap: 10px; padding: 8px; } .stat b { font-size: 16px; } }
+
+</style>
+<script>
+/*
+ * Owais GameHub Game SDK
+ * Shared by every built-in game. Talks to the GameHub player through postMessage:
+ *   host -> game : { source: "ogh-host", type: "pause" | "resume" | "restart" | "mute", muted }
+ *   game -> host : { source: "ogh-game", game, type: "ready" | "score" | "gameover" | "win" | "paused" | "resumed" | "muted", ... }
+ * When a game runs on its own (offline download), the SDK shows its own pause screen and
+ * handles P / Esc (pause), R (restart) and M (mute).
+ */
+(function () {
+  "use strict";
+  var GAME_ID = document.documentElement.getAttribute("data-game") || "game";
+  var embedded = window.parent !== window;
+  var handlers = {};
+  var audioCtx = null;
+  var lowerIsBetter = false;
+  var overlay = null;
+
+  function read(key, fallback) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw === null ? fallback : JSON.parse(raw);
+    } catch (e) {
+      return fallback;
+    }
+  }
+  function write(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      /* storage unavailable: the game still works, it just won't remember */
+    }
+  }
+  function emit(ev, arg) {
+    (handlers[ev] || []).forEach(function (fn) {
+      try { fn(arg); } catch (e) { console.error(e); }
+    });
+  }
+
+  var GH = {
+    id: GAME_ID,
+    embedded: embedded,
+    paused: false,
+    muted: read("ogh:muted", false) === true,
+
+    config: function (opts) {
+      lowerIsBetter = !!(opts && opts.lowerIsBetter);
+    },
+    on: function (ev, fn) {
+      (handlers[ev] = handlers[ev] || []).push(fn);
+    },
+    send: function (type, data) {
+      if (!embedded) return;
+      var msg = { source: "ogh-game", game: GAME_ID, type: type };
+      if (data) for (var k in data) msg[k] = data[k];
+      try { window.parent.postMessage(msg, window.location.origin === "null" ? "*" : window.location.origin); } catch (e) { /* ignore */ }
+    },
+    ready: function () {
+      GH.send("ready", { muted: GH.muted });
+    },
+    score: function (value) {
+      GH.send("score", { value: value });
+    },
+    best: function () {
+      return read("ogh:best:" + GAME_ID, null);
+    },
+    submit: function (value) {
+      var best = GH.best();
+      var better = best === null || (lowerIsBetter ? value < best : value > best);
+      if (better) write("ogh:best:" + GAME_ID, value);
+      return { best: better ? value : best, isNew: better };
+    },
+    gameOver: function (finalScore) {
+      var r = GH.submit(finalScore);
+      GH.send("gameover", { score: finalScore, best: r.best, isNew: r.isNew });
+      return r;
+    },
+    win: function (finalScore) {
+      var r = GH.submit(finalScore);
+      GH.send("win", { score: finalScore, best: r.best, isNew: r.isNew });
+      return r;
+    },
+    save: function (state) { write("ogh:save:" + GAME_ID, state); },
+    load: function () { return read("ogh:save:" + GAME_ID, null); },
+    clearSave: function () {
+      try { localStorage.removeItem("ogh:save:" + GAME_ID); } catch (e) { /* ignore */ }
+    },
+
+    pause: function () {
+      if (GH.paused) return;
+      GH.paused = true;
+      emit("pause");
+      GH.send("paused");
+      showOverlay(true);
+    },
+    resume: function () {
+      if (!GH.paused) return;
+      GH.paused = false;
+      emit("resume");
+      GH.send("resumed");
+      showOverlay(false);
+    },
+    togglePause: function () {
+      GH.paused ? GH.resume() : GH.pause();
+    },
+    restart: function () {
+      GH.paused = false;
+      showOverlay(false);
+      emit("restart");
+      GH.send("resumed");
+    },
+    setMuted: function (m) {
+      GH.muted = !!m;
+      write("ogh:muted", GH.muted);
+      emit("mute", GH.muted);
+      GH.send("muted", { muted: GH.muted });
+    },
+
+    /* Short synthesized sound effect: GH.sound(440, 0.08, "square", 0.05, 220) */
+    sound: function (freq, duration, type, volume, slideTo) {
+      if (GH.muted) return;
+      try {
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        var t = audioCtx.currentTime;
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.type = type || "sine";
+        osc.frequency.setValueAtTime(freq, t);
+        if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + (duration || 0.1));
+        gain.gain.setValueAtTime(volume || 0.05, t);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + (duration || 0.1));
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + (duration || 0.1) + 0.02);
+      } catch (e) { /* audio blocked */ }
+    },
+
+    /* Canvas at a fixed logical size, scaled to fit the viewport and sharp on HiDPI screens */
+    fit: function (canvas, W, H) {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      canvas._W = W;
+      canvas._H = H;
+      var c = canvas.getContext("2d");
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      function size() {
+        var s = Math.min(window.innerWidth / W, window.innerHeight / H);
+        canvas.style.width = Math.floor(W * s) + "px";
+        canvas.style.height = Math.floor(H * s) + "px";
+      }
+      size();
+      window.addEventListener("resize", size);
+      return c;
+    },
+    /* Pointer/touch position in logical canvas coordinates */
+    point: function (canvas, e) {
+      var r = canvas.getBoundingClientRect();
+      var src = e.touches && e.touches[0] ? e.touches[0] : e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : e;
+      return {
+        x: ((src.clientX - r.left) / r.width) * canvas._W,
+        y: ((src.clientY - r.top) / r.height) * canvas._H,
+      };
+    },
+    /* Fixed-timestep-friendly loop; update is skipped while paused */
+    loop: function (update, render) {
+      var last = performance.now();
+      function frame(now) {
+        var dt = Math.min((now - last) / 1000, 1 / 20);
+        last = now;
+        if (!GH.paused) update(dt);
+        render();
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    },
+    /* Swipe detection: cb("up" | "down" | "left" | "right") */
+    swipe: function (el, cb, min) {
+      var sx = 0, sy = 0, active = false;
+      min = min || 24;
+      el.addEventListener("touchstart", function (e) {
+        active = true;
+        sx = e.touches[0].clientX;
+        sy = e.touches[0].clientY;
+      }, { passive: true });
+      el.addEventListener("touchmove", function (e) {
+        if (active) e.preventDefault();
+      }, { passive: false });
+      el.addEventListener("touchend", function (e) {
+        if (!active) return;
+        active = false;
+        var dx = e.changedTouches[0].clientX - sx;
+        var dy = e.changedTouches[0].clientY - sy;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < min) return;
+        cb(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up");
+      });
+    },
+  };
+
+  function showOverlay(on) {
+    if (embedded) return; // the GameHub player draws its own pause screen
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "ogh-pause";
+      overlay.innerHTML =
+        '<div><strong>Paused</strong><p>Press P or tap to resume</p><p class="ogh-keys">R restart &nbsp; M sound on/off</p></div>';
+      overlay.addEventListener("click", GH.resume);
+      document.body.appendChild(overlay);
+    }
+    overlay.style.display = on ? "flex" : "none";
+  }
+
+  window.addEventListener("message", function (e) {
+    if (e.origin !== window.location.origin && window.location.origin !== "null") return;
+    var d = e.data;
+    if (!d || d.source !== "ogh-host") return;
+    if (d.type === "pause") GH.pause();
+    else if (d.type === "resume") GH.resume();
+    else if (d.type === "restart") GH.restart();
+    else if (d.type === "mute") GH.setMuted(d.muted);
+  });
+
+  window.addEventListener("keydown", function (e) {
+    if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
+    var k = e.key.toLowerCase();
+    if (k === "p" || k === "escape") GH.togglePause();
+    else if (k === "r" && !e.ctrlKey && !e.metaKey) GH.restart();
+    else if (k === "m") GH.setMuted(!GH.muted);
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) GH.pause();
+  });
+
+  /* Canvas text and overlay helpers used by the arcade games */
+  GH.text = function (c, s, x, y, size, color, align, weight) {
+    c.font = (weight || 600) + " " + size + "px 'Sora Variable', 'Segoe UI', system-ui, sans-serif";
+    c.fillStyle = color || "#e8ebff";
+    c.textAlign = align || "center";
+    c.textBaseline = "middle";
+    c.fillText(s, x, y);
+  };
+  GH.card = function (c, W, H, title, sub, extra) {
+    c.fillStyle = "rgba(6, 7, 13, 0.74)";
+    c.fillRect(0, 0, W, H);
+    GH.text(c, title, W / 2, H / 2 - 26, Math.min(40, W / 10), "#e8ebff", "center", 700);
+    if (sub) GH.text(c, sub, W / 2, H / 2 + 16, 15, "#8f96bf", "center", 500);
+    if (extra) GH.text(c, extra, W / 2, H / 2 + 46, 14, "#40e0ff", "center", 600);
+  };
+  GH.rand = function (a, b) { return a + Math.random() * (b - a); };
+  GH.hit = function (a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  };
+
+  window.GameHub = GH;
+  window.addEventListener("load", GH.ready);
+})();
+
+</script>
+</head>
+<style>
+  .sgrid { display: grid; grid-template-columns: repeat(9, 1fr); width: min(94vw, 58vh, 480px); aspect-ratio: 1; margin: 0 auto; border: 2px solid var(--violet); border-radius: 10px; overflow: hidden; }
+  .sc { border: 0; border-right: 1px solid rgba(148,163,255,.16); border-bottom: 1px solid rgba(148,163,255,.16); background: rgba(255,255,255,.03); font-size: clamp(15px, 4.6vw, 26px); font-weight: 600; padding: 0; color: #9fb3ff; }
+  .sc.given { color: var(--ink); font-weight: 800; }
+  .sc.c2, .sc.c5 { border-right: 2px solid var(--violet); }
+  .sc.r2, .sc.r5 { border-bottom: 2px solid var(--violet); }
+  .sc.peer { background: rgba(139,107,255,.1); }
+  .sc.same { background: rgba(64,224,255,.16); }
+  .sc.sel { background: rgba(64,224,255,.32); }
+  .sc.bad { color: var(--rose); }
+  .pad { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; width: min(94vw, 480px); margin: 0 auto; }
+  .pad .btn { padding: 10px 0; font-size: 18px; }
+  .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+</style>
+<body>
+<div class="stage">
+  <div class="panel">
+    <h1 class="title">Sudoku</h1>
+    <div class="row" role="group" aria-label="Difficulty">
+      <button class="btn" data-lvl="easy">Easy</button>
+      <button class="btn" data-lvl="medium">Medium</button>
+      <button class="btn" data-lvl="hard">Hard</button>
+    </div>
+    <div class="hud">
+      <div class="stat"><small>Time</small><b id="time">0:00</b></div>
+      <div class="stat"><small>Mistakes</small><b id="mistakes">0</b></div>
+      <div class="stat"><small>Filled</small><b id="filled">0</b></div>
+    </div>
+    <div class="sgrid" id="grid" aria-label="Sudoku grid"></div>
+    <div class="pad" id="pad"></div>
+    <p class="msg" id="msg" aria-live="polite">Select a square, then pick a number. Progress is saved automatically.</p>
+  </div>
+</div>
+<script>
+(function () {
+  var GH = GameHub, gridEl = document.getElementById("grid"), padEl = document.getElementById("pad");
+  var CLUES = { easy: 40, medium: 32, hard: 27 };
+  var lvl = "easy", puzzle, solution, cur, sel = -1, mistakes, seconds, timer, done, cells = [];
+
+  function shuffle(a) { for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function ok(g, i, v) {
+    var r = Math.floor(i / 9), c = i % 9, br = r - r % 3, bc = c - c % 3;
+    for (var k = 0; k < 9; k++) {
+      if (g[r * 9 + k] === v || g[k * 9 + c] === v) return false;
+      if (g[(br + Math.floor(k / 3)) * 9 + bc + k % 3] === v) return false;
+    }
+    return true;
+  }
+  function fill(g) {
+    var i = g.indexOf(0); if (i < 0) return true;
+    var nums = shuffle([1,2,3,4,5,6,7,8,9]);
+    for (var n = 0; n < 9; n++) if (ok(g, i, nums[n])) { g[i] = nums[n]; if (fill(g)) return true; g[i] = 0; }
+    return false;
+  }
+  function countSolutions(g, limit) {
+    var best = -1, bestCount = 10;
+    for (var i = 0; i < 81; i++) if (!g[i]) {
+      var cnt = 0; for (var v = 1; v <= 9; v++) if (ok(g, i, v)) cnt++;
+      if (cnt < bestCount) { bestCount = cnt; best = i; if (cnt === 0) return 0; }
+    }
+    if (best < 0) return 1;
+    var total = 0;
+    for (var v2 = 1; v2 <= 9 && total < limit; v2++) if (ok(g, best, v2)) { g[best] = v2; total += countSolutions(g, limit - total); g[best] = 0; }
+    return total;
+  }
+  function generate() {
+    var g = Array(81).fill(0); fill(g);
+    solution = g.slice();
+    var p = g.slice(), order = shuffle(Array.from({ length: 81 }, function (_, i) { return i; })), filled = 81, target = CLUES[lvl];
+    for (var k = 0; k < order.length && filled > target; k++) {
+      var i = order[k], keep = p[i]; p[i] = 0;
+      if (countSolutions(p.slice(), 2) !== 1) p[i] = keep; else filled--;
+    }
+    puzzle = p;
+  }
+  function fmt(s) { return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+  function save() { GH.save({ lvl: lvl, puzzle: puzzle, solution: solution, cur: cur, mistakes: mistakes, seconds: seconds, done: done }); }
+  function startTimer() { clearInterval(timer); timer = setInterval(function () { if (!GH.paused && !done) { seconds++; document.getElementById("time").textContent = fmt(seconds); if (seconds % 5 === 0) save(); } }, 1000); }
+  function newGame() {
+    document.getElementById("msg").textContent = "Building a fresh puzzle";
+    setTimeout(function () {
+      generate(); cur = puzzle.slice(); mistakes = 0; seconds = 0; done = false; sel = -1;
+      document.getElementById("msg").textContent = "Select a square, then pick a number. Progress is saved automatically.";
+      save(); render(); startTimer(); GH.score(0);
+    }, 20);
+  }
+  function build() {
+    for (var i = 0; i < 81; i++) {
+      var b = document.createElement("button");
+      b.className = "sc c" + (i % 9) + " r" + Math.floor(i / 9); b.dataset.i = i;
+      b.addEventListener("click", function () { sel = +this.dataset.i; render(); });
+      gridEl.appendChild(b); cells.push(b);
+    }
+    [1,2,3,4,5,6,7,8,9].forEach(function (n) {
+      var b = document.createElement("button"); b.className = "btn"; b.textContent = n;
+      b.addEventListener("click", function () { enter(n); }); padEl.appendChild(b);
+    });
+    var er = document.createElement("button"); er.className = "btn"; er.textContent = "Erase"; er.style.fontSize = "14px";
+    er.addEventListener("click", function () { enter(0); }); padEl.appendChild(er);
+  }
+  function render() {
+    var sv = sel >= 0 ? cur[sel] : 0, sr = Math.floor(sel / 9), scc = sel % 9;
+    var filled = 0;
+    cells.forEach(function (b, i) {
+      var r = Math.floor(i / 9), c = i % 9, v = cur[i];
+      if (v) filled++;
+      b.textContent = v || "";
+      b.classList.toggle("given", !!puzzle[i]);
+      b.classList.toggle("bad", !!v && !puzzle[i] && v !== solution[i]);
+      b.classList.toggle("sel", i === sel);
+      b.classList.toggle("same", i !== sel && !!sv && v === sv);
+      b.classList.toggle("peer", sel >= 0 && i !== sel && (r === sr || c === scc || (Math.floor(r / 3) === Math.floor(sr / 3) && Math.floor(c / 3) === Math.floor(scc / 3))));
+      b.setAttribute("aria-label", "Row " + (r + 1) + " column " + (c + 1) + (v ? ", " + v : ", empty"));
+    });
+    document.getElementById("mistakes").textContent = mistakes;
+    document.getElementById("filled").textContent = filled + "/81";
+    document.getElementById("time").textContent = fmt(seconds);
+    document.querySelectorAll("[data-lvl]").forEach(function (b) { b.classList.toggle("on", b.dataset.lvl === lvl); });
+  }
+  function enter(n) {
+    if (sel < 0 || done || GH.paused || puzzle[sel]) return;
+    cur[sel] = n;
+    if (n && n !== solution[sel]) { mistakes++; GH.sound(200, 0.12, "sawtooth", 0.03); }
+    else if (n) GH.sound(620, 0.04, "triangle", 0.03);
+    GH.score(cur.filter(Boolean).length);
+    if (cur.every(function (v, i) { return v === solution[i]; })) {
+      done = true; clearInterval(timer);
+      GH.config({ lowerIsBetter: true });
+      var r = GH.win(seconds);
+      document.getElementById("msg").textContent = "Solved in " + fmt(seconds) + " with " + mistakes + (mistakes === 1 ? " mistake." : " mistakes.") + (r.isNew ? " New best time!" : "");
+      GH.sound(880, 0.4, "triangle", 0.05, 1320);
+    }
+    save(); render();
+  }
+  window.addEventListener("keydown", function (e) {
+    if (/^[1-9]$/.test(e.key)) enter(+e.key);
+    else if (e.key === "Backspace" || e.key === "Delete" || e.key === "0") enter(0);
+    else if (e.key.indexOf("Arrow") === 0) {
+      e.preventDefault(); if (sel < 0) sel = 0;
+      else if (e.key === "ArrowUp" && sel >= 9) sel -= 9;
+      else if (e.key === "ArrowDown" && sel < 72) sel += 9;
+      else if (e.key === "ArrowLeft" && sel % 9) sel -= 1;
+      else if (e.key === "ArrowRight" && sel % 9 < 8) sel += 1;
+      render();
+    }
+  });
+  document.querySelectorAll("[data-lvl]").forEach(function (b) { b.addEventListener("click", function () { lvl = b.dataset.lvl; newGame(); }); });
+  GH.on("restart", newGame);
+  build();
+  var s = GH.load();
+  if (s && s.puzzle && !s.done) {
+    lvl = s.lvl; puzzle = s.puzzle; solution = s.solution; cur = s.cur; mistakes = s.mistakes; seconds = s.seconds; done = false;
+    document.getElementById("msg").textContent = "Welcome back. Your puzzle is where you left it.";
+    render(); startTimer(); GH.score(cur.filter(Boolean).length);
+  } else newGame();
+})();
+</script>
+</body>
+</html>

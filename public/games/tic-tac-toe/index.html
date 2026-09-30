@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en" data-game="tic-tac-toe">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Tic-Tac-Toe | Owais GameHub</title>
+<link rel="stylesheet" href="../_sdk/base.css" />
+<script src="../_sdk/sdk.js"></script>
+</head>
+<style>
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: min(84vw, 62vh, 420px); aspect-ratio: 1; margin: 0 auto; }
+  .cell { border: 1px solid var(--edge); background: rgba(255,255,255,0.04); border-radius: 14px; font-size: clamp(40px, 12vw, 84px); font-weight: 800; display: grid; place-items: center; transition: background .15s; }
+  .cell:hover:not(:disabled) { background: rgba(64,224,255,0.08); }
+  .cell.X { color: var(--cyan); text-shadow: 0 0 22px var(--cyan); }
+  .cell.O { color: var(--rose); text-shadow: 0 0 22px var(--rose); }
+  .cell.win { background: rgba(157,255,106,0.14); border-color: var(--lime); }
+  .cell span { animation: pop .18s ease-out; }
+  @keyframes pop { from { transform: scale(.4); opacity: 0; } }
+  .modes { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+</style>
+<body>
+<div class="stage">
+  <div class="panel">
+    <h1 class="title">Tic-Tac-Toe</h1>
+    <div class="modes" role="group" aria-label="Game mode">
+      <button class="btn" data-mode="easy">Vs computer: easy</button>
+      <button class="btn" data-mode="hard">Vs computer: hard</button>
+      <button class="btn" data-mode="two">2 players</button>
+    </div>
+    <div class="hud">
+      <div class="stat"><small id="xl">You (X)</small><b id="xs">0</b></div>
+      <div class="stat"><small>Draws</small><b id="ds">0</b></div>
+      <div class="stat"><small id="ol">Computer (O)</small><b id="os">0</b></div>
+    </div>
+    <div class="board" id="board"></div>
+    <p class="msg" id="msg" aria-live="polite"></p>
+    <div class="hud"><button class="btn primary" id="again">New round</button></div>
+  </div>
+</div>
+<script>
+(function () {
+  var GH = GameHub, boardEl = document.getElementById("board"), msg = document.getElementById("msg");
+  var LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  var mode = "hard", board, turn, over, tally = { X: 0, O: 0, D: 0 }, starter = "X", cells = [];
+
+  for (var i = 0; i < 9; i++) {
+    var b = document.createElement("button");
+    b.className = "cell"; b.dataset.i = i; b.setAttribute("aria-label", "Square " + (i + 1));
+    b.addEventListener("click", function () { play(+this.dataset.i); });
+    boardEl.appendChild(b); cells.push(b);
+  }
+  function winnerOf(bd) {
+    for (var i = 0; i < LINES.length; i++) {
+      var l = LINES[i];
+      if (bd[l[0]] && bd[l[0]] === bd[l[1]] && bd[l[1]] === bd[l[2]]) return { p: bd[l[0]], line: l };
+    }
+    return bd.every(Boolean) ? { p: "D", line: [] } : null;
+  }
+  function minimax(bd, player, depth) {
+    var w = winnerOf(bd);
+    if (w) return { s: w.p === "O" ? 10 - depth : w.p === "X" ? depth - 10 : 0 };
+    var best = { s: player === "O" ? -Infinity : Infinity, i: -1 };
+    for (var i = 0; i < 9; i++) if (!bd[i]) {
+      bd[i] = player;
+      var r = minimax(bd, player === "O" ? "X" : "O", depth + 1);
+      bd[i] = null;
+      if ((player === "O" && r.s > best.s) || (player === "X" && r.s < best.s)) best = { s: r.s, i: i };
+    }
+    return best;
+  }
+  function aiMove() {
+    var empty = board.map(function (v, i) { return v ? -1 : i; }).filter(function (i) { return i >= 0; });
+    if (mode === "easy" && Math.random() < 0.6) return empty[Math.floor(Math.random() * empty.length)];
+    return minimax(board.slice(), "O", 0).i;
+  }
+  function draw(win) {
+    cells.forEach(function (el, i) {
+      el.className = "cell" + (board[i] ? " " + board[i] : "") + (win && win.line.indexOf(i) >= 0 ? " win" : "");
+      el.innerHTML = board[i] ? "<span>" + (board[i] === "X" ? "✕" : "◯") + "</span>" : "";
+      el.disabled = !!board[i] || over;
+    });
+    document.getElementById("xs").textContent = tally.X;
+    document.getElementById("os").textContent = tally.O;
+    document.getElementById("ds").textContent = tally.D;
+    document.getElementById("xl").textContent = mode === "two" ? "Player X" : "You (X)";
+    document.getElementById("ol").textContent = mode === "two" ? "Player O" : "Computer (O)";
+    document.querySelectorAll("[data-mode]").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === mode); });
+  }
+  function status() {
+    if (over) return;
+    msg.textContent = mode === "two" ? "Player " + turn + " to move" : turn === "X" ? "Your move" : "Computer is thinking";
+  }
+  function finish(w) {
+    over = true; tally[w.p]++;
+    if (w.p === "D") { msg.textContent = "It's a draw"; GH.sound(330, 0.2, "triangle", 0.04); }
+    else if (mode === "two") { msg.textContent = "Player " + w.p + " wins"; GH.sound(880, 0.3, "triangle", 0.05); }
+    else if (w.p === "X") { msg.textContent = "You win"; GH.sound(880, 0.3, "triangle", 0.05, 1320); }
+    else { msg.textContent = "Computer wins"; GH.sound(220, 0.3, "sawtooth", 0.04, 110); }
+    if (mode !== "two") { GH.score(tally.X); GH.send(w.p === "X" ? "win" : "gameover", { score: tally.X }); if (w.p === "X") GH.submit(tally.X); }
+    draw(w);
+  }
+  function play(i) {
+    if (over || board[i] || GH.paused) return;
+    if (mode !== "two" && turn !== "X") return;
+    place(i);
+    if (!over && mode !== "two") { draw(); status(); setTimeout(function () { if (!over && !GH.paused) place(aiMove()); else if (GH.paused) pending = true; }, 380); }
+  }
+  var pending = false;
+  GH.on("resume", function () { if (pending && !over) { pending = false; place(aiMove()); } });
+  function place(i) {
+    board[i] = turn; GH.sound(turn === "X" ? 520 : 400, 0.05, "square", 0.03);
+    var w = winnerOf(board);
+    turn = turn === "X" ? "O" : "X";
+    if (w) finish(w); else { draw(); status(); }
+  }
+  function newRound() {
+    board = Array(9).fill(null); over = false; pending = false;
+    starter = starter === "X" ? "O" : "X"; turn = mode === "two" ? "X" : starter;
+    draw(); status();
+    if (mode !== "two" && turn === "O") setTimeout(function () { place(aiMove()); }, 450);
+  }
+  document.querySelectorAll("[data-mode]").forEach(function (b) {
+    b.addEventListener("click", function () { mode = b.dataset.mode; tally = { X: 0, O: 0, D: 0 }; starter = "O"; GH.score(0); newRound(); });
+  });
+  document.getElementById("again").addEventListener("click", newRound);
+  GH.on("restart", function () { tally = { X: 0, O: 0, D: 0 }; starter = "O"; GH.score(0); newRound(); });
+  starter = "O"; newRound();
+})();
+</script>
+</body>
+</html>

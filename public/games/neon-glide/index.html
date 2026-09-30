@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en" data-game="neon-glide">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Neon Glide | Owais GameHub</title>
+<link rel="stylesheet" href="../_sdk/base.css" />
+<script src="../_sdk/sdk.js"></script>
+</head>
+<body>
+<div class="stage"><canvas id="c" aria-label="Neon Glide game"></canvas></div>
+<script>
+(function () {
+  var GH = GameHub, cv = document.getElementById("c"), W = 400, H = 660, c = GH.fit(cv, W, H);
+  var GROUND = H - 70, GAP_W = 70;
+  var bird, gates, score, best, state, spawn, speed, t = 0, trail = [], stars = [];
+  for (var i = 0; i < 60; i++) stars.push({ x: Math.random() * W, y: Math.random() * GROUND, s: Math.random() * 1.6 + 0.3 });
+
+  function reset() {
+    bird = { x: 110, y: H / 2 - 40, vy: 0, r: 13 };
+    gates = []; score = 0; spawn = 0.4; speed = 170; state = "ready"; trail = [];
+    best = GH.best() || 0; GH.score(0);
+  }
+  function flap() {
+    if (GH.paused) return;
+    if (state === "over") { if (t > 0.5) reset(); return; }
+    if (state === "ready") state = "play";
+    bird.vy = -410;
+    GH.sound(600, 0.07, "sine", 0.05, 900);
+  }
+  function update(dt) {
+    t += dt;
+    stars.forEach(function (s) { s.x -= s.s * 14 * dt; if (s.x < 0) s.x += W; });
+    if (state === "ready") { bird.y = H / 2 - 40 + Math.sin(t * 3) * 8; return; }
+    if (state === "over") { if (bird.y < GROUND - bird.r) { bird.vy += 1500 * dt; bird.y = Math.min(GROUND - bird.r, bird.y + bird.vy * dt); } return; }
+    bird.vy = Math.min(bird.vy + 1450 * dt, 620);
+    bird.y += bird.vy * dt;
+    trail.push({ x: bird.x, y: bird.y, life: 0.35 });
+    trail.forEach(function (p) { p.x -= speed * dt; p.life -= dt; });
+    trail = trail.filter(function (p) { return p.life > 0; });
+    spawn -= dt;
+    if (spawn <= 0) {
+      var gap = Math.max(132, 170 - score * 1.5);
+      var top = GH.rand(80, GROUND - gap - 60);
+      gates.push({ x: W + 10, top: top, gap: gap, passed: false });
+      spawn = 1.55;
+    }
+    speed = 170 + Math.min(score * 3, 90);
+    gates.forEach(function (g) { g.x -= speed * dt; });
+    gates = gates.filter(function (g) { return g.x > -GAP_W - 10; });
+    for (var i = 0; i < gates.length; i++) {
+      var g = gates[i];
+      if (!g.passed && g.x + GAP_W < bird.x) { g.passed = true; score++; GH.score(score); GH.sound(880, 0.06, "triangle", 0.05); }
+      if (bird.x + bird.r > g.x && bird.x - bird.r < g.x + GAP_W && (bird.y - bird.r < g.top || bird.y + bird.r > g.top + g.gap)) return crash();
+    }
+    if (bird.y - bird.r < 0) { bird.y = bird.r; bird.vy = Math.max(bird.vy, 0); }
+    if (bird.y + bird.r >= GROUND) crash();
+  }
+  function crash() {
+    state = "over"; t = 0;
+    best = GH.gameOver(score).best;
+    GH.sound(200, 0.4, "sawtooth", 0.05, 50);
+  }
+  function render() {
+    var sky = c.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, "#0b0e24"); sky.addColorStop(1, "#1b1040");
+    c.fillStyle = sky; c.fillRect(0, 0, W, H);
+    stars.forEach(function (s) { c.fillStyle = "rgba(232,235,255," + s.s / 2.5 + ")"; c.fillRect(s.x, s.y, s.s, s.s); });
+    gates.forEach(function (g) {
+      c.shadowBlur = 16; c.shadowColor = "#8b6bff";
+      var gr = c.createLinearGradient(g.x, 0, g.x + GAP_W, 0);
+      gr.addColorStop(0, "#5b3fd6"); gr.addColorStop(1, "#8b6bff");
+      c.fillStyle = gr;
+      c.beginPath(); c.roundRect(g.x, -10, GAP_W, g.top + 10, 10); c.fill();
+      c.beginPath(); c.roundRect(g.x, g.top + g.gap, GAP_W, GROUND - g.top - g.gap, 10); c.fill();
+      c.shadowBlur = 0; c.fillStyle = "#40e0ff";
+      c.fillRect(g.x, g.top - 4, GAP_W, 4); c.fillRect(g.x, g.top + g.gap, GAP_W, 4);
+    });
+    c.fillStyle = "#0c0a1f"; c.fillRect(0, GROUND, W, H - GROUND);
+    c.strokeStyle = "#ff4fa3"; c.lineWidth = 2; c.beginPath(); c.moveTo(0, GROUND); c.lineTo(W, GROUND); c.stroke();
+    var off = (t * speed) % 40;
+    c.strokeStyle = "rgba(255,79,163,0.25)";
+    for (var x = -off; x < W; x += 40) { c.beginPath(); c.moveTo(x, GROUND); c.lineTo(x - 30, H); c.stroke(); }
+    trail.forEach(function (p) { c.globalAlpha = p.life * 1.6; c.fillStyle = "#40e0ff"; c.beginPath(); c.arc(p.x, p.y, 5 * p.life * 2.5, 0, 6.3); c.fill(); });
+    c.globalAlpha = 1;
+    c.save(); c.translate(bird.x, bird.y); c.rotate(Math.max(-0.5, Math.min(1.1, bird.vy / 600)));
+    c.shadowBlur = 20; c.shadowColor = "#40e0ff"; c.fillStyle = "#40e0ff";
+    c.beginPath(); c.moveTo(18, 0); c.lineTo(-12, -12); c.lineTo(-6, 0); c.lineTo(-12, 12); c.closePath(); c.fill();
+    c.restore(); c.shadowBlur = 0;
+    if (state !== "ready") GH.text(c, String(score), W / 2, 70, 44, "#e8ebff", "center", 700);
+    if (state === "ready") GH.card(c, W, H, "Neon Glide", "Tap, click or press Space to fly", "Slip through the gates");
+    if (state === "over") GH.card(c, W, H, "Crashed", "Score " + score + "   Best " + best, "Tap or press Space to try again");
+  }
+  window.addEventListener("keydown", function (e) {
+    if (e.key === " " || e.key === "ArrowUp" || e.key === "w") { e.preventDefault(); if (!e.repeat) flap(); }
+  });
+  cv.addEventListener("mousedown", flap);
+  cv.addEventListener("touchstart", function (e) { e.preventDefault(); flap(); }, { passive: false });
+  GH.on("restart", reset);
+  reset();
+  GH.loop(update, render);
+})();
+</script>
+</body>
+</html>

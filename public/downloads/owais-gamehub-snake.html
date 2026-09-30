@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en" data-game="snake">
+<head>
+<!-- Offline edition from Owais GameHub. Open this file in any modern browser. -->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Snake | Owais GameHub</title>
+<style>
+/* Shared look for every Owais GameHub game */
+:root {
+  --bg: #06070d; --panel: #11142a; --edge: rgba(148, 163, 255, 0.18);
+  --ink: #e8ebff; --dim: #8f96bf; --cyan: #40e0ff; --violet: #8b6bff; --rose: #ff4fa3; --lime: #9dff6a; --amber: #ffc857;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 0%, #151a3a 0%, var(--bg) 70%); color: var(--ink);
+  font-family: "Sora Variable", "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+.stage { position: fixed; inset: 0; display: grid; place-items: center; }
+canvas { display: block; border-radius: 10px; box-shadow: 0 0 0 1px var(--edge), 0 30px 80px -30px rgba(64, 224, 255, 0.35); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.btn { border: 1px solid var(--edge); background: rgba(255, 255, 255, 0.05); padding: 10px 18px; border-radius: 10px; font-weight: 600; }
+.btn:hover { border-color: var(--cyan); }
+.btn.primary { background: linear-gradient(135deg, var(--cyan), var(--violet)); border: 0; color: #050612; }
+.btn.on { border-color: var(--cyan); background: rgba(64, 224, 255, 0.12); }
+.hud { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.stat { background: rgba(255, 255, 255, 0.04); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 14px; text-align: center; min-width: 84px; }
+.stat small { display: block; color: var(--dim); font-size: 11px; letter-spacing: .04em; }
+.stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.msg { min-height: 24px; text-align: center; color: var(--dim); font-size: 14px; }
+.panel { width: min(96vw, 560px); display: grid; gap: 16px; padding: 16px; }
+.title { margin: 0; text-align: center; font-size: 22px; letter-spacing: .02em; }
+.ogh-pause { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center;
+  background: rgba(6, 7, 13, 0.82); backdrop-filter: blur(6px); z-index: 99; cursor: pointer; }
+.ogh-pause strong { font-size: 32px; }
+.ogh-pause p { color: var(--dim); margin: 8px 0 0; }
+.ogh-pause .ogh-keys { font-size: 13px; }
+@media (max-height: 520px) { .panel { gap: 10px; padding: 8px; } .stat b { font-size: 16px; } }
+
+</style>
+<script>
+/*
+ * Owais GameHub Game SDK
+ * Shared by every built-in game. Talks to the GameHub player through postMessage:
+ *   host -> game : { source: "ogh-host", type: "pause" | "resume" | "restart" | "mute", muted }
+ *   game -> host : { source: "ogh-game", game, type: "ready" | "score" | "gameover" | "win" | "paused" | "resumed" | "muted", ... }
+ * When a game runs on its own (offline download), the SDK shows its own pause screen and
+ * handles P / Esc (pause), R (restart) and M (mute).
+ */
+(function () {
+  "use strict";
+  var GAME_ID = document.documentElement.getAttribute("data-game") || "game";
+  var embedded = window.parent !== window;
+  var handlers = {};
+  var audioCtx = null;
+  var lowerIsBetter = false;
+  var overlay = null;
+
+  function read(key, fallback) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw === null ? fallback : JSON.parse(raw);
+    } catch (e) {
+      return fallback;
+    }
+  }
+  function write(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      /* storage unavailable: the game still works, it just won't remember */
+    }
+  }
+  function emit(ev, arg) {
+    (handlers[ev] || []).forEach(function (fn) {
+      try { fn(arg); } catch (e) { console.error(e); }
+    });
+  }
+
+  var GH = {
+    id: GAME_ID,
+    embedded: embedded,
+    paused: false,
+    muted: read("ogh:muted", false) === true,
+
+    config: function (opts) {
+      lowerIsBetter = !!(opts && opts.lowerIsBetter);
+    },
+    on: function (ev, fn) {
+      (handlers[ev] = handlers[ev] || []).push(fn);
+    },
+    send: function (type, data) {
+      if (!embedded) return;
+      var msg = { source: "ogh-game", game: GAME_ID, type: type };
+      if (data) for (var k in data) msg[k] = data[k];
+      try { window.parent.postMessage(msg, window.location.origin === "null" ? "*" : window.location.origin); } catch (e) { /* ignore */ }
+    },
+    ready: function () {
+      GH.send("ready", { muted: GH.muted });
+    },
+    score: function (value) {
+      GH.send("score", { value: value });
+    },
+    best: function () {
+      return read("ogh:best:" + GAME_ID, null);
+    },
+    submit: function (value) {
+      var best = GH.best();
+      var better = best === null || (lowerIsBetter ? value < best : value > best);
+      if (better) write("ogh:best:" + GAME_ID, value);
+      return { best: better ? value : best, isNew: better };
+    },
+    gameOver: function (finalScore) {
+      var r = GH.submit(finalScore);
+      GH.send("gameover", { score: finalScore, best: r.best, isNew: r.isNew });
+      return r;
+    },
+    win: function (finalScore) {
+      var r = GH.submit(finalScore);
+      GH.send("win", { score: finalScore, best: r.best, isNew: r.isNew });
+      return r;
+    },
+    save: function (state) { write("ogh:save:" + GAME_ID, state); },
+    load: function () { return read("ogh:save:" + GAME_ID, null); },
+    clearSave: function () {
+      try { localStorage.removeItem("ogh:save:" + GAME_ID); } catch (e) { /* ignore */ }
+    },
+
+    pause: function () {
+      if (GH.paused) return;
+      GH.paused = true;
+      emit("pause");
+      GH.send("paused");
+      showOverlay(true);
+    },
+    resume: function () {
+      if (!GH.paused) return;
+      GH.paused = false;
+      emit("resume");
+      GH.send("resumed");
+      showOverlay(false);
+    },
+    togglePause: function () {
+      GH.paused ? GH.resume() : GH.pause();
+    },
+    restart: function () {
+      GH.paused = false;
+      showOverlay(false);
+      emit("restart");
+      GH.send("resumed");
+    },
+    setMuted: function (m) {
+      GH.muted = !!m;
+      write("ogh:muted", GH.muted);
+      emit("mute", GH.muted);
+      GH.send("muted", { muted: GH.muted });
+    },
+
+    /* Short synthesized sound effect: GH.sound(440, 0.08, "square", 0.05, 220) */
+    sound: function (freq, duration, type, volume, slideTo) {
+      if (GH.muted) return;
+      try {
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        var t = audioCtx.currentTime;
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.type = type || "sine";
+        osc.frequency.setValueAtTime(freq, t);
+        if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + (duration || 0.1));
+        gain.gain.setValueAtTime(volume || 0.05, t);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + (duration || 0.1));
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + (duration || 0.1) + 0.02);
+      } catch (e) { /* audio blocked */ }
+    },
+
+    /* Canvas at a fixed logical size, scaled to fit the viewport and sharp on HiDPI screens */
+    fit: function (canvas, W, H) {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      canvas._W = W;
+      canvas._H = H;
+      var c = canvas.getContext("2d");
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      function size() {
+        var s = Math.min(window.innerWidth / W, window.innerHeight / H);
+        canvas.style.width = Math.floor(W * s) + "px";
+        canvas.style.height = Math.floor(H * s) + "px";
+      }
+      size();
+      window.addEventListener("resize", size);
+      return c;
+    },
+    /* Pointer/touch position in logical canvas coordinates */
+    point: function (canvas, e) {
+      var r = canvas.getBoundingClientRect();
+      var src = e.touches && e.touches[0] ? e.touches[0] : e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : e;
+      return {
+        x: ((src.clientX - r.left) / r.width) * canvas._W,
+        y: ((src.clientY - r.top) / r.height) * canvas._H,
+      };
+    },
+    /* Fixed-timestep-friendly loop; update is skipped while paused */
+    loop: function (update, render) {
+      var last = performance.now();
+      function frame(now) {
+        var dt = Math.min((now - last) / 1000, 1 / 20);
+        last = now;
+        if (!GH.paused) update(dt);
+        render();
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    },
+    /* Swipe detection: cb("up" | "down" | "left" | "right") */
+    swipe: function (el, cb, min) {
+      var sx = 0, sy = 0, active = false;
+      min = min || 24;
+      el.addEventListener("touchstart", function (e) {
+        active = true;
+        sx = e.touches[0].clientX;
+        sy = e.touches[0].clientY;
+      }, { passive: true });
+      el.addEventListener("touchmove", function (e) {
+        if (active) e.preventDefault();
+      }, { passive: false });
+      el.addEventListener("touchend", function (e) {
+        if (!active) return;
+        active = false;
+        var dx = e.changedTouches[0].clientX - sx;
+        var dy = e.changedTouches[0].clientY - sy;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < min) return;
+        cb(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up");
+      });
+    },
+  };
+
+  function showOverlay(on) {
+    if (embedded) return; // the GameHub player draws its own pause screen
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "ogh-pause";
+      overlay.innerHTML =
+        '<div><strong>Paused</strong><p>Press P or tap to resume</p><p class="ogh-keys">R restart &nbsp; M sound on/off</p></div>';
+      overlay.addEventListener("click", GH.resume);
+      document.body.appendChild(overlay);
+    }
+    overlay.style.display = on ? "flex" : "none";
+  }
+
+  window.addEventListener("message", function (e) {
+    if (e.origin !== window.location.origin && window.location.origin !== "null") return;
+    var d = e.data;
+    if (!d || d.source !== "ogh-host") return;
+    if (d.type === "pause") GH.pause();
+    else if (d.type === "resume") GH.resume();
+    else if (d.type === "restart") GH.restart();
+    else if (d.type === "mute") GH.setMuted(d.muted);
+  });
+
+  window.addEventListener("keydown", function (e) {
+    if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
+    var k = e.key.toLowerCase();
+    if (k === "p" || k === "escape") GH.togglePause();
+    else if (k === "r" && !e.ctrlKey && !e.metaKey) GH.restart();
+    else if (k === "m") GH.setMuted(!GH.muted);
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) GH.pause();
+  });
+
+  /* Canvas text and overlay helpers used by the arcade games */
+  GH.text = function (c, s, x, y, size, color, align, weight) {
+    c.font = (weight || 600) + " " + size + "px 'Sora Variable', 'Segoe UI', system-ui, sans-serif";
+    c.fillStyle = color || "#e8ebff";
+    c.textAlign = align || "center";
+    c.textBaseline = "middle";
+    c.fillText(s, x, y);
+  };
+  GH.card = function (c, W, H, title, sub, extra) {
+    c.fillStyle = "rgba(6, 7, 13, 0.74)";
+    c.fillRect(0, 0, W, H);
+    GH.text(c, title, W / 2, H / 2 - 26, Math.min(40, W / 10), "#e8ebff", "center", 700);
+    if (sub) GH.text(c, sub, W / 2, H / 2 + 16, 15, "#8f96bf", "center", 500);
+    if (extra) GH.text(c, extra, W / 2, H / 2 + 46, 14, "#40e0ff", "center", 600);
+  };
+  GH.rand = function (a, b) { return a + Math.random() * (b - a); };
+  GH.hit = function (a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  };
+
+  window.GameHub = GH;
+  window.addEventListener("load", GH.ready);
+})();
+
+</script>
+</head>
+<body>
+<div class="stage"><canvas id="c" aria-label="Snake game"></canvas></div>
+<script>
+(function () {
+  var GH = GameHub, cv = document.getElementById("c");
+  var N = 20, CS = 24, TOP = 52, W = N * CS, H = N * CS + TOP;
+  var c = GH.fit(cv, W, H);
+  var DIRS = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+  var snake, dir, queue, food, score, best, state, acc, step, pulse = 0, sparks = [];
+
+  function reset() {
+    snake = [{ x: 9, y: 10 }, { x: 8, y: 10 }, { x: 7, y: 10 }];
+    dir = DIRS.right; queue = []; score = 0; step = 0.13; acc = 0; sparks = [];
+    best = GH.best() || 0; state = "ready"; placeFood(); GH.score(0);
+  }
+  function placeFood() {
+    do { food = { x: Math.floor(Math.random() * N), y: Math.floor(Math.random() * N) }; }
+    while (snake.some(function (s) { return s.x === food.x && s.y === food.y; }));
+  }
+  function turn(name) {
+    if (GH.paused) return;
+    if (state === "over") { reset(); state = "play"; }
+    if (state === "ready") state = "play";
+    var v = DIRS[name], last = queue.length ? queue[queue.length - 1] : dir;
+    if ((v.x === -last.x && v.y === -last.y) || (v.x === last.x && v.y === last.y)) return;
+    if (queue.length < 3) queue.push(v);
+  }
+  function tick() {
+    if (queue.length) dir = queue.shift();
+    var head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    var eating = head.x === food.x && head.y === food.y;
+    var body = eating ? snake : snake.slice(0, -1);
+    if (head.x < 0 || head.y < 0 || head.x >= N || head.y >= N ||
+        body.some(function (s) { return s.x === head.x && s.y === head.y; })) return die();
+    snake.unshift(head);
+    if (eating) {
+      score += 10; GH.score(score);
+      step = Math.max(0.055, step - 0.003);
+      for (var i = 0; i < 12; i++) sparks.push({ x: food.x * CS + CS / 2, y: TOP + food.y * CS + CS / 2, vx: GH.rand(-120, 120), vy: GH.rand(-120, 120), life: 0.5 });
+      GH.sound(660, 0.08, "square", 0.04, 990);
+      placeFood();
+    } else snake.pop();
+  }
+  function die() {
+    state = "over";
+    best = GH.gameOver(score).best;
+    GH.sound(220, 0.35, "sawtooth", 0.05, 60);
+  }
+  function update(dt) {
+    pulse += dt;
+    sparks.forEach(function (p) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; });
+    sparks = sparks.filter(function (p) { return p.life > 0; });
+    if (state !== "play") return;
+    acc += dt;
+    while (acc >= step && state === "play") { acc -= step; tick(); }
+  }
+  function render() {
+    c.fillStyle = "#080a16"; c.fillRect(0, 0, W, H);
+    GH.text(c, "Score " + score, 16, TOP / 2, 18, "#e8ebff", "left", 700);
+    GH.text(c, "Best " + best, W - 16, TOP / 2, 16, "#8f96bf", "right", 600);
+    c.strokeStyle = "rgba(148,163,255,0.06)"; c.lineWidth = 1;
+    for (var i = 0; i <= N; i++) {
+      c.beginPath(); c.moveTo(i * CS, TOP); c.lineTo(i * CS, H); c.stroke();
+      c.beginPath(); c.moveTo(0, TOP + i * CS); c.lineTo(W, TOP + i * CS); c.stroke();
+    }
+    var r = 6 + Math.sin(pulse * 6) * 1.5;
+    c.shadowBlur = 18; c.shadowColor = "#ff4fa3"; c.fillStyle = "#ff4fa3";
+    c.beginPath(); c.arc(food.x * CS + CS / 2, TOP + food.y * CS + CS / 2, r, 0, Math.PI * 2); c.fill();
+    c.shadowColor = "#40e0ff";
+    snake.forEach(function (s, i) {
+      var t = i / snake.length;
+      c.shadowBlur = i === 0 ? 18 : 8;
+      c.fillStyle = "rgb(" + Math.round(64 + 75 * t) + "," + Math.round(224 - 117 * t) + ",255)";
+      c.beginPath();
+      c.roundRect(s.x * CS + 2, TOP + s.y * CS + 2, CS - 4, CS - 4, i === 0 ? 8 : 6);
+      c.fill();
+    });
+    c.shadowBlur = 0;
+    sparks.forEach(function (p) {
+      c.globalAlpha = p.life * 2; c.fillStyle = "#ffc857"; c.fillRect(p.x - 2, p.y - 2, 4, 4);
+    });
+    c.globalAlpha = 1;
+    if (state === "ready") GH.card(c, W, H, "Snake", "Arrow keys, WASD or swipe to move", "Press any arrow to start");
+    if (state === "over") GH.card(c, W, H, "Game over", "You scored " + score, "Press Space or tap to play again");
+  }
+
+  window.addEventListener("keydown", function (e) {
+    var k = e.key;
+    var map = { ArrowUp: "up", w: "up", W: "up", ArrowDown: "down", s: "down", S: "down", ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right" };
+    if (map[k]) { e.preventDefault(); turn(map[k]); }
+    if (k === " " && state !== "play") { e.preventDefault(); if (state === "over") reset(); state = "play"; }
+  });
+  GH.swipe(document.body, turn);
+  cv.addEventListener("click", function () { if (GH.paused) return; if (state === "over") reset(); if (state !== "play") state = "play"; });
+  GH.on("restart", reset);
+  reset();
+  GH.loop(update, render);
+})();
+</script>
+</body>
+</html>

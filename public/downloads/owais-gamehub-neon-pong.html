@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en" data-game="neon-pong">
+<head>
+<!-- Offline edition from Owais GameHub. Open this file in any modern browser. -->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Neon Pong | Owais GameHub</title>
+<style>
+/* Shared look for every Owais GameHub game */
+:root {
+  --bg: #06070d; --panel: #11142a; --edge: rgba(148, 163, 255, 0.18);
+  --ink: #e8ebff; --dim: #8f96bf; --cyan: #40e0ff; --violet: #8b6bff; --rose: #ff4fa3; --lime: #9dff6a; --amber: #ffc857;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 0%, #151a3a 0%, var(--bg) 70%); color: var(--ink);
+  font-family: "Sora Variable", "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+.stage { position: fixed; inset: 0; display: grid; place-items: center; }
+canvas { display: block; border-radius: 10px; box-shadow: 0 0 0 1px var(--edge), 0 30px 80px -30px rgba(64, 224, 255, 0.35); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.btn { border: 1px solid var(--edge); background: rgba(255, 255, 255, 0.05); padding: 10px 18px; border-radius: 10px; font-weight: 600; }
+.btn:hover { border-color: var(--cyan); }
+.btn.primary { background: linear-gradient(135deg, var(--cyan), var(--violet)); border: 0; color: #050612; }
+.btn.on { border-color: var(--cyan); background: rgba(64, 224, 255, 0.12); }
+.hud { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.stat { background: rgba(255, 255, 255, 0.04); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 14px; text-align: center; min-width: 84px; }
+.stat small { display: block; color: var(--dim); font-size: 11px; letter-spacing: .04em; }
+.stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.msg { min-height: 24px; text-align: center; color: var(--dim); font-size: 14px; }
+.panel { width: min(96vw, 560px); display: grid; gap: 16px; padding: 16px; }
+.title { margin: 0; text-align: center; font-size: 22px; letter-spacing: .02em; }
+.ogh-pause { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center;
+  background: rgba(6, 7, 13, 0.82); backdrop-filter: blur(6px); z-index: 99; cursor: pointer; }
+.ogh-pause strong { font-size: 32px; }
+.ogh-pause p { color: var(--dim); margin: 8px 0 0; }
+.ogh-pause .ogh-keys { font-size: 13px; }
+@media (max-height: 520px) { .panel { gap: 10px; padding: 8px; } .stat b { font-size: 16px; } }
+
+</style>
+<script>
+/*
+ * Owais GameHub Game SDK
+ * Shared by every built-in game. Talks to the GameHub player through postMessage:
+ *   host -> game : { source: "ogh-host", type: "pause" | "resume" | "restart" | "mute", muted }
+ *   game -> host : { source: "ogh-game", game, type: "ready" | "score" | "gameover" | "win" | "paused" | "resumed" | "muted", ... }
+ * When a game runs on its own (offline download), the SDK shows its own pause screen and
+ * handles P / Esc (pause), R (restart) and M (mute).
+ */
+(function () {
+  "use strict";
+  var GAME_ID = document.documentElement.getAttribute("data-game") || "game";
+  var embedded = window.parent !== window;
+  var handlers = {};
+  var audioCtx = null;
+  var lowerIsBetter = false;
+  var overlay = null;
+
+  function read(key, fallback) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw === null ? fallback : JSON.parse(raw);
+    } catch (e) {
+      return fallback;
+    }
+  }
+  function write(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      /* storage unavailable: the game still works, it just won't remember */
+    }
+  }
+  function emit(ev, arg) {
+    (handlers[ev] || []).forEach(function (fn) {
+      try { fn(arg); } catch (e) { console.error(e); }
+    });
+  }
+
+  var GH = {
+    id: GAME_ID,
+    embedded: embedded,
+    paused: false,
+    muted: read("ogh:muted", false) === true,
+
+    config: function (opts) {
+      lowerIsBetter = !!(opts && opts.lowerIsBetter);
+    },
+    on: function (ev, fn) {
+      (handlers[ev] = handlers[ev] || []).push(fn);
+    },
+    send: function (type, data) {
+      if (!embedded) return;
+      var msg = { source: "ogh-game", game: GAME_ID, type: type };
+      if (data) for (var k in data) msg[k] = data[k];
+      try { window.parent.postMessage(msg, window.location.origin === "null" ? "*" : window.location.origin); } catch (e) { /* ignore */ }
+    },
+    ready: function () {
+      GH.send("ready", { muted: GH.muted });
+    },
+    score: function (value) {
+      GH.send("score", { value: value });
+    },
+    best: function () {
+      return read("ogh:best:" + GAME_ID, null);
+    },
+    submit: function (value) {
+      var best = GH.best();
+      var better = best === null || (lowerIsBetter ? value < best : value > best);
+      if (better) write("ogh:best:" + GAME_ID, value);
+      return { best: better ? value : best, isNew: better };
+    },
+    gameOver: function (finalScore) {
+      var r = GH.submit(finalScore);
+      GH.send("gameover", { score: finalScore, best: r.best, isNew: r.isNew });
+      return r;
+    },
+    win: function (finalScore) {
+      var r = GH.submit(finalScore);
+      GH.send("win", { score: finalScore, best: r.best, isNew: r.isNew });
+      return r;
+    },
+    save: function (state) { write("ogh:save:" + GAME_ID, state); },
+    load: function () { return read("ogh:save:" + GAME_ID, null); },
+    clearSave: function () {
+      try { localStorage.removeItem("ogh:save:" + GAME_ID); } catch (e) { /* ignore */ }
+    },
+
+    pause: function () {
+      if (GH.paused) return;
+      GH.paused = true;
+      emit("pause");
+      GH.send("paused");
+      showOverlay(true);
+    },
+    resume: function () {
+      if (!GH.paused) return;
+      GH.paused = false;
+      emit("resume");
+      GH.send("resumed");
+      showOverlay(false);
+    },
+    togglePause: function () {
+      GH.paused ? GH.resume() : GH.pause();
+    },
+    restart: function () {
+      GH.paused = false;
+      showOverlay(false);
+      emit("restart");
+      GH.send("resumed");
+    },
+    setMuted: function (m) {
+      GH.muted = !!m;
+      write("ogh:muted", GH.muted);
+      emit("mute", GH.muted);
+      GH.send("muted", { muted: GH.muted });
+    },
+
+    /* Short synthesized sound effect: GH.sound(440, 0.08, "square", 0.05, 220) */
+    sound: function (freq, duration, type, volume, slideTo) {
+      if (GH.muted) return;
+      try {
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        var t = audioCtx.currentTime;
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.type = type || "sine";
+        osc.frequency.setValueAtTime(freq, t);
+        if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + (duration || 0.1));
+        gain.gain.setValueAtTime(volume || 0.05, t);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + (duration || 0.1));
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + (duration || 0.1) + 0.02);
+      } catch (e) { /* audio blocked */ }
+    },
+
+    /* Canvas at a fixed logical size, scaled to fit the viewport and sharp on HiDPI screens */
+    fit: function (canvas, W, H) {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      canvas._W = W;
+      canvas._H = H;
+      var c = canvas.getContext("2d");
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      function size() {
+        var s = Math.min(window.innerWidth / W, window.innerHeight / H);
+        canvas.style.width = Math.floor(W * s) + "px";
+        canvas.style.height = Math.floor(H * s) + "px";
+      }
+      size();
+      window.addEventListener("resize", size);
+      return c;
+    },
+    /* Pointer/touch position in logical canvas coordinates */
+    point: function (canvas, e) {
+      var r = canvas.getBoundingClientRect();
+      var src = e.touches && e.touches[0] ? e.touches[0] : e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : e;
+      return {
+        x: ((src.clientX - r.left) / r.width) * canvas._W,
+        y: ((src.clientY - r.top) / r.height) * canvas._H,
+      };
+    },
+    /* Fixed-timestep-friendly loop; update is skipped while paused */
+    loop: function (update, render) {
+      var last = performance.now();
+      function frame(now) {
+        var dt = Math.min((now - last) / 1000, 1 / 20);
+        last = now;
+        if (!GH.paused) update(dt);
+        render();
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    },
+    /* Swipe detection: cb("up" | "down" | "left" | "right") */
+    swipe: function (el, cb, min) {
+      var sx = 0, sy = 0, active = false;
+      min = min || 24;
+      el.addEventListener("touchstart", function (e) {
+        active = true;
+        sx = e.touches[0].clientX;
+        sy = e.touches[0].clientY;
+      }, { passive: true });
+      el.addEventListener("touchmove", function (e) {
+        if (active) e.preventDefault();
+      }, { passive: false });
+      el.addEventListener("touchend", function (e) {
+        if (!active) return;
+        active = false;
+        var dx = e.changedTouches[0].clientX - sx;
+        var dy = e.changedTouches[0].clientY - sy;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < min) return;
+        cb(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up");
+      });
+    },
+  };
+
+  function showOverlay(on) {
+    if (embedded) return; // the GameHub player draws its own pause screen
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "ogh-pause";
+      overlay.innerHTML =
+        '<div><strong>Paused</strong><p>Press P or tap to resume</p><p class="ogh-keys">R restart &nbsp; M sound on/off</p></div>';
+      overlay.addEventListener("click", GH.resume);
+      document.body.appendChild(overlay);
+    }
+    overlay.style.display = on ? "flex" : "none";
+  }
+
+  window.addEventListener("message", function (e) {
+    if (e.origin !== window.location.origin && window.location.origin !== "null") return;
+    var d = e.data;
+    if (!d || d.source !== "ogh-host") return;
+    if (d.type === "pause") GH.pause();
+    else if (d.type === "resume") GH.resume();
+    else if (d.type === "restart") GH.restart();
+    else if (d.type === "mute") GH.setMuted(d.muted);
+  });
+
+  window.addEventListener("keydown", function (e) {
+    if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
+    var k = e.key.toLowerCase();
+    if (k === "p" || k === "escape") GH.togglePause();
+    else if (k === "r" && !e.ctrlKey && !e.metaKey) GH.restart();
+    else if (k === "m") GH.setMuted(!GH.muted);
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) GH.pause();
+  });
+
+  /* Canvas text and overlay helpers used by the arcade games */
+  GH.text = function (c, s, x, y, size, color, align, weight) {
+    c.font = (weight || 600) + " " + size + "px 'Sora Variable', 'Segoe UI', system-ui, sans-serif";
+    c.fillStyle = color || "#e8ebff";
+    c.textAlign = align || "center";
+    c.textBaseline = "middle";
+    c.fillText(s, x, y);
+  };
+  GH.card = function (c, W, H, title, sub, extra) {
+    c.fillStyle = "rgba(6, 7, 13, 0.74)";
+    c.fillRect(0, 0, W, H);
+    GH.text(c, title, W / 2, H / 2 - 26, Math.min(40, W / 10), "#e8ebff", "center", 700);
+    if (sub) GH.text(c, sub, W / 2, H / 2 + 16, 15, "#8f96bf", "center", 500);
+    if (extra) GH.text(c, extra, W / 2, H / 2 + 46, 14, "#40e0ff", "center", 600);
+  };
+  GH.rand = function (a, b) { return a + Math.random() * (b - a); };
+  GH.hit = function (a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  };
+
+  window.GameHub = GH;
+  window.addEventListener("load", GH.ready);
+})();
+
+</script>
+</head>
+<body>
+<div class="stage"><canvas id="c" aria-label="Neon Pong"></canvas></div>
+<script>
+(function () {
+  var GH = GameHub, cv = document.getElementById("c"), W = 820, H = 480, c = GH.fit(cv, W, H);
+  var WIN = 7, PH = 92, PW = 12;
+  var mode = 1, state, L, R, ball, serveT, keys = {}, winner, trail = [];
+  var btn1 = { x: W / 2 - 170, y: H / 2 + 34, w: 150, h: 48 }, btn2 = { x: W / 2 + 20, y: H / 2 + 34, w: 150, h: 48 };
+
+  function reset() {
+    L = { x: 28, y: H / 2 - PH / 2, score: 0, target: null };
+    R = { x: W - 28 - PW, y: H / 2 - PH / 2, score: 0, target: null };
+    state = "menu"; winner = null; trail = []; GH.score(0);
+    ball = { x: W / 2, y: H / 2, vx: 0, vy: 0, r: 9, speed: 0 };
+  }
+  function begin(m) {
+    if (GH.paused) return;
+    mode = m; L.score = 0; R.score = 0; GH.score(0); serve(Math.random() < 0.5 ? 1 : -1);
+  }
+  function serve(dir) {
+    ball.x = W / 2; ball.y = H / 2; ball.speed = 430;
+    var a = GH.rand(-0.5, 0.5);
+    ball.vx = Math.cos(a) * ball.speed * dir; ball.vy = Math.sin(a) * ball.speed;
+    state = "serve"; serveT = 0.9; trail = [];
+  }
+  function point(side) {
+    side.score++;
+    GH.sound(side === L ? 880 : 260, 0.25, "triangle", 0.05);
+    if (mode === 1) GH.score(L.score);
+    if (side.score >= WIN) {
+      state = "over"; winner = side;
+      if (mode === 1) { if (side === L) GH.win(L.score); else GH.gameOver(L.score); }
+      else GH.send("gameover", { score: 0 });
+      return;
+    }
+    serve(side === L ? 1 : -1);
+  }
+  function movePaddle(p, up, down, dt) {
+    if (p.target !== null) p.y += (p.target - PH / 2 - p.y) * Math.min(1, dt * 18);
+    if (up) p.y -= 460 * dt;
+    if (down) p.y += 460 * dt;
+    p.y = Math.max(0, Math.min(H - PH, p.y));
+  }
+  function update(dt) {
+    if (state === "menu" || state === "over") return;
+    movePaddle(L, keys.w || (mode === 1 && keys.up), keys.s || (mode === 1 && keys.down), dt);
+    if (mode === 2) movePaddle(R, keys.up, keys.down, dt);
+    else {
+      var aim = ball.vx > 0 ? ball.y + (ball.vx > 0 ? ball.vy * 0.08 : 0) : H / 2;
+      var diff = aim - (R.y + PH / 2), max = 300 + Math.min(L.score + R.score, 8) * 12;
+      R.y += Math.max(-max * dt, Math.min(max * dt, diff));
+      R.y = Math.max(0, Math.min(H - PH, R.y));
+    }
+    if (state === "serve") { serveT -= dt; if (serveT <= 0) state = "play"; return; }
+    var steps = 3;
+    for (var i = 0; i < steps; i++) step(dt / steps);
+    trail.push({ x: ball.x, y: ball.y, life: 0.25 });
+    trail.forEach(function (p) { p.life -= dt; });
+    trail = trail.filter(function (p) { return p.life > 0; });
+  }
+  function bounce(p, dir) {
+    var off = (ball.y - (p.y + PH / 2)) / (PH / 2);
+    var ang = Math.max(-1, Math.min(1, off)) * 0.9;
+    ball.speed = Math.min(ball.speed + 28, 900);
+    ball.vx = Math.cos(ang) * ball.speed * dir; ball.vy = Math.sin(ang) * ball.speed;
+    GH.sound(dir > 0 ? 520 : 440, 0.05, "square", 0.04);
+  }
+  function step(dt) {
+    ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+    if (ball.y < ball.r) { ball.y = ball.r; ball.vy = Math.abs(ball.vy); GH.sound(300, 0.03, "sine", 0.03); }
+    if (ball.y > H - ball.r) { ball.y = H - ball.r; ball.vy = -Math.abs(ball.vy); GH.sound(300, 0.03, "sine", 0.03); }
+    if (ball.vx < 0 && ball.x - ball.r <= L.x + PW && ball.x > L.x && ball.y > L.y - ball.r && ball.y < L.y + PH + ball.r) { ball.x = L.x + PW + ball.r; bounce(L, 1); }
+    if (ball.vx > 0 && ball.x + ball.r >= R.x && ball.x < R.x + PW && ball.y > R.y - ball.r && ball.y < R.y + PH + ball.r) { ball.x = R.x - ball.r; bounce(R, -1); }
+    if (ball.x < -30) point(R);
+    else if (ball.x > W + 30) point(L);
+  }
+  function paddle(p, color) {
+    c.shadowBlur = 20; c.shadowColor = color; c.fillStyle = color;
+    c.beginPath(); c.roundRect(p.x, p.y, PW, PH, 6); c.fill(); c.shadowBlur = 0;
+  }
+  function button(b, label, sub) {
+    c.fillStyle = "rgba(64,224,255,0.1)"; c.strokeStyle = "#40e0ff"; c.lineWidth = 1.5;
+    c.beginPath(); c.roundRect(b.x, b.y, b.w, b.h, 10); c.fill(); c.stroke();
+    GH.text(c, label, b.x + b.w / 2, b.y + 20, 16, "#e8ebff", "center", 700);
+    GH.text(c, sub, b.x + b.w / 2, b.y + 36, 11, "#8f96bf", "center", 500);
+  }
+  function render() {
+    c.fillStyle = "#070814"; c.fillRect(0, 0, W, H);
+    c.strokeStyle = "rgba(148,163,255,0.2)"; c.setLineDash([10, 14]); c.lineWidth = 2;
+    c.beginPath(); c.moveTo(W / 2, 0); c.lineTo(W / 2, H); c.stroke(); c.setLineDash([]);
+    GH.text(c, String(L.score), W / 2 - 70, 60, 54, "rgba(64,224,255,0.9)", "center", 700);
+    GH.text(c, String(R.score), W / 2 + 70, 60, 54, "rgba(255,79,163,0.9)", "center", 700);
+    paddle(L, "#40e0ff"); paddle(R, "#ff4fa3");
+    trail.forEach(function (p) { c.globalAlpha = p.life * 2; c.fillStyle = "#ffffff"; c.beginPath(); c.arc(p.x, p.y, ball.r * p.life * 3, 0, 6.3); c.fill(); });
+    c.globalAlpha = 1;
+    if (state !== "menu" && state !== "over") {
+      c.shadowBlur = 20; c.shadowColor = "#fff"; c.fillStyle = "#fff";
+      c.beginPath(); c.arc(ball.x, ball.y, ball.r, 0, 6.3); c.fill(); c.shadowBlur = 0;
+    }
+    if (state === "menu") {
+      GH.card(c, W, H, "Neon Pong", "First to 7 points wins. Left paddle: W/S, mouse or touch. Right paddle: arrow keys.");
+      button(btn1, "1 Player", "vs computer  (key 1)"); button(btn2, "2 Players", "same device  (key 2)");
+    }
+    if (state === "over") {
+      var msg = mode === 1 ? (winner === L ? "You win" : "Computer wins") : (winner === L ? "Left player wins" : "Right player wins");
+      GH.card(c, W, H, msg, L.score + " : " + R.score, "Press Space or tap to go back to the menu");
+    }
+  }
+  function inside(b, p) { return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h; }
+  function press(e) {
+    if (GH.paused) return;
+    var p = GH.point(cv, e);
+    if (state === "menu") { if (inside(btn1, p)) begin(1); else if (inside(btn2, p)) begin(2); return; }
+    if (state === "over") { reset(); return; }
+    drag(e);
+  }
+  function drag(e) {
+    if (state === "menu" || state === "over") return;
+    var list = e.touches ? Array.prototype.slice.call(e.touches) : [e];
+    list.forEach(function (tch) {
+      var p = GH.point(cv, { clientX: tch.clientX, clientY: tch.clientY });
+      if (p.x < W / 2 || mode === 1) L.target = p.y; else R.target = p.y;
+    });
+  }
+  cv.addEventListener("mousedown", press);
+  cv.addEventListener("mousemove", function (e) { if (mode === 1 || e.buttons) drag(e); });
+  cv.addEventListener("touchstart", function (e) { e.preventDefault(); press(e); }, { passive: false });
+  cv.addEventListener("touchmove", function (e) { e.preventDefault(); drag(e); }, { passive: false });
+  cv.addEventListener("touchend", function (e) { if (!e.touches.length) { L.target = null; R.target = null; } });
+  cv.addEventListener("mouseleave", function () { L.target = null; });
+  var km = { w: "w", W: "w", s: "s", S: "s", ArrowUp: "up", ArrowDown: "down" };
+  window.addEventListener("keydown", function (e) {
+    if (km[e.key]) { e.preventDefault(); keys[km[e.key]] = true; L.target = null; R.target = null; }
+    if (state === "menu" && e.key === "1") begin(1);
+    if (state === "menu" && e.key === "2") begin(2);
+    if (state === "over" && e.key === " ") { e.preventDefault(); reset(); }
+  });
+  window.addEventListener("keyup", function (e) { if (km[e.key]) keys[km[e.key]] = false; });
+  GH.on("pause", function () { keys = {}; });
+  GH.on("restart", reset);
+  reset();
+  GH.loop(update, render);
+})();
+</script>
+</body>
+</html>

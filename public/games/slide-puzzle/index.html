@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en" data-game="slide-puzzle">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Slide Puzzle | Owais GameHub</title>
+<link rel="stylesheet" href="../_sdk/base.css" />
+<script src="../_sdk/sdk.js"></script>
+</head>
+<style>
+  .board { position: relative; width: min(88vw, 60vh, 440px); aspect-ratio: 1; margin: 0 auto; background: rgba(255,255,255,0.04); border: 1px solid var(--edge); border-radius: 16px; }
+  .tile { position: absolute; border: 0; border-radius: 10px; font-weight: 800; font-size: clamp(18px, 6vw, 32px); color: #fff;
+    background: linear-gradient(135deg, #3a4bd6, #8b6bff); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); transition: left .12s ease, top .12s ease; }
+  .tile.home { background: linear-gradient(135deg, #1fb8d9, #40e0ff); color: #04121f; }
+  .sizes { display: flex; gap: 8px; justify-content: center; }
+</style>
+<body>
+<div class="stage">
+  <div class="panel">
+    <h1 class="title">Slide Puzzle</h1>
+    <div class="sizes" role="group" aria-label="Board size">
+      <button class="btn" data-size="3">3 × 3</button>
+      <button class="btn" data-size="4">4 × 4</button>
+    </div>
+    <div class="hud">
+      <div class="stat"><small>Moves</small><b id="moves">0</b></div>
+      <div class="stat"><small>Time</small><b id="time">0:00</b></div>
+      <div class="stat"><small>Best (moves)</small><b id="best">–</b></div>
+    </div>
+    <div class="board" id="board" aria-label="Sliding puzzle"></div>
+    <p class="msg" id="msg" aria-live="polite">Put the tiles in order from 1. Tap a tile next to the gap, or use arrow keys.</p>
+    <div class="hud"><button class="btn primary" id="shuffle">Shuffle</button></div>
+  </div>
+</div>
+<script>
+(function () {
+  var GH = GameHub, boardEl = document.getElementById("board");
+  var size = 4, tiles, moves, seconds, timer, solved, started;
+
+  function bestKey() { return "ogh:best:slide-puzzle:" + size; }
+  function getBest() { try { return JSON.parse(localStorage.getItem(bestKey())); } catch (e) { return null; } }
+  function fmt(s) { return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+  function blank() { return tiles.indexOf(0); }
+  function neighbors(i) {
+    var r = Math.floor(i / size), c = i % size, n = [];
+    if (r > 0) n.push(i - size); if (r < size - 1) n.push(i + size);
+    if (c > 0) n.push(i - 1); if (c < size - 1) n.push(i + 1);
+    return n;
+  }
+  function shuffle() {
+    clearInterval(timer);
+    tiles = []; for (var i = 1; i < size * size; i++) tiles.push(i); tiles.push(0);
+    var prev = -1;
+    for (var k = 0; k < size * size * 40; k++) {
+      var b = blank(), opts = neighbors(b).filter(function (x) { return x !== prev; });
+      var pick = opts[Math.floor(Math.random() * opts.length)];
+      tiles[b] = tiles[pick]; tiles[pick] = 0; prev = b;
+    }
+    if (isSolved()) return shuffle();
+    moves = 0; seconds = 0; solved = false; started = false;
+    var best = getBest(); document.getElementById("best").textContent = best === null ? "–" : best;
+    document.getElementById("msg").textContent = "Put the tiles in order from 1. Tap a tile next to the gap, or use arrow keys.";
+    document.querySelectorAll("[data-size]").forEach(function (b) { b.classList.toggle("on", +b.dataset.size === size); });
+    GH.score(0); build();
+  }
+  function isSolved() { for (var i = 0; i < tiles.length - 1; i++) if (tiles[i] !== i + 1) return false; return true; }
+  function build() {
+    boardEl.innerHTML = "";
+    var pad = 8, gap = 8;
+    tiles.forEach(function (v) {
+      if (!v) return;
+      var b = document.createElement("button");
+      b.className = "tile"; b.textContent = v; b.dataset.v = v;
+      b.style.width = b.style.height = "calc((100% - " + (pad * 2 + gap * (size - 1)) + "px) / " + size + ")";
+      b.addEventListener("click", function () { tap(tiles.indexOf(v)); });
+      boardEl.appendChild(b);
+    });
+    place();
+  }
+  function place() {
+    var pad = 8, gap = 8;
+    boardEl.querySelectorAll(".tile").forEach(function (b) {
+      var v = +b.dataset.v, i = tiles.indexOf(v), r = Math.floor(i / size), c = i % size;
+      var cell = "((100% - " + (pad * 2 + gap * (size - 1)) + "px) / " + size + ")";
+      b.style.left = "calc(" + pad + "px + " + c + " * (" + cell + " + " + gap + "px))";
+      b.style.top = "calc(" + pad + "px + " + r + " * (" + cell + " + " + gap + "px))";
+      b.classList.toggle("home", i === v - 1);
+    });
+    document.getElementById("moves").textContent = moves;
+    document.getElementById("time").textContent = fmt(seconds);
+  }
+  function tap(i) {
+    if (solved || GH.paused) return;
+    var b = blank();
+    if (neighbors(b).indexOf(i) < 0) return;
+    if (!started) { started = true; timer = setInterval(function () { if (!GH.paused && !solved) { seconds++; place(); } }, 1000); }
+    tiles[b] = tiles[i]; tiles[i] = 0; moves++; GH.score(moves);
+    GH.sound(420, 0.03, "triangle", 0.03);
+    place();
+    if (isSolved()) {
+      solved = true; clearInterval(timer);
+      var best = getBest(), isNew = best === null || moves < best;
+      if (isNew) try { localStorage.setItem(bestKey(), JSON.stringify(moves)); } catch (e) {}
+      if (size === 4) GH.win(moves); else GH.send("win", { score: moves });
+      document.getElementById("best").textContent = isNew ? moves : best;
+      document.getElementById("msg").textContent = "Solved in " + moves + " moves and " + fmt(seconds) + (isNew ? ". New best!" : ".");
+      GH.sound(880, 0.4, "triangle", 0.05, 1320);
+    }
+  }
+  window.addEventListener("keydown", function (e) {
+    var b = blank(), r = Math.floor(b / size), c = b % size, t = -1;
+    if (e.key === "ArrowUp" && r < size - 1) t = b + size;
+    if (e.key === "ArrowDown" && r > 0) t = b - size;
+    if (e.key === "ArrowLeft" && c < size - 1) t = b + 1;
+    if (e.key === "ArrowRight" && c > 0) t = b - 1;
+    if (t >= 0) { e.preventDefault(); tap(t); }
+  });
+  document.querySelectorAll("[data-size]").forEach(function (b) { b.addEventListener("click", function () { size = +b.dataset.size; shuffle(); }); });
+  document.getElementById("shuffle").addEventListener("click", shuffle);
+  GH.config({ lowerIsBetter: true });
+  GH.on("restart", shuffle);
+  shuffle();
+})();
+</script>
+</body>
+</html>

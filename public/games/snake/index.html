@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en" data-game="snake">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Snake | Owais GameHub</title>
+<link rel="stylesheet" href="../_sdk/base.css" />
+<script src="../_sdk/sdk.js"></script>
+</head>
+<body>
+<div class="stage"><canvas id="c" aria-label="Snake game"></canvas></div>
+<script>
+(function () {
+  var GH = GameHub, cv = document.getElementById("c");
+  var N = 20, CS = 24, TOP = 52, W = N * CS, H = N * CS + TOP;
+  var c = GH.fit(cv, W, H);
+  var DIRS = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+  var snake, dir, queue, food, score, best, state, acc, step, pulse = 0, sparks = [];
+
+  function reset() {
+    snake = [{ x: 9, y: 10 }, { x: 8, y: 10 }, { x: 7, y: 10 }];
+    dir = DIRS.right; queue = []; score = 0; step = 0.13; acc = 0; sparks = [];
+    best = GH.best() || 0; state = "ready"; placeFood(); GH.score(0);
+  }
+  function placeFood() {
+    do { food = { x: Math.floor(Math.random() * N), y: Math.floor(Math.random() * N) }; }
+    while (snake.some(function (s) { return s.x === food.x && s.y === food.y; }));
+  }
+  function turn(name) {
+    if (GH.paused) return;
+    if (state === "over") { reset(); state = "play"; }
+    if (state === "ready") state = "play";
+    var v = DIRS[name], last = queue.length ? queue[queue.length - 1] : dir;
+    if ((v.x === -last.x && v.y === -last.y) || (v.x === last.x && v.y === last.y)) return;
+    if (queue.length < 3) queue.push(v);
+  }
+  function tick() {
+    if (queue.length) dir = queue.shift();
+    var head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    var eating = head.x === food.x && head.y === food.y;
+    var body = eating ? snake : snake.slice(0, -1);
+    if (head.x < 0 || head.y < 0 || head.x >= N || head.y >= N ||
+        body.some(function (s) { return s.x === head.x && s.y === head.y; })) return die();
+    snake.unshift(head);
+    if (eating) {
+      score += 10; GH.score(score);
+      step = Math.max(0.055, step - 0.003);
+      for (var i = 0; i < 12; i++) sparks.push({ x: food.x * CS + CS / 2, y: TOP + food.y * CS + CS / 2, vx: GH.rand(-120, 120), vy: GH.rand(-120, 120), life: 0.5 });
+      GH.sound(660, 0.08, "square", 0.04, 990);
+      placeFood();
+    } else snake.pop();
+  }
+  function die() {
+    state = "over";
+    best = GH.gameOver(score).best;
+    GH.sound(220, 0.35, "sawtooth", 0.05, 60);
+  }
+  function update(dt) {
+    pulse += dt;
+    sparks.forEach(function (p) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; });
+    sparks = sparks.filter(function (p) { return p.life > 0; });
+    if (state !== "play") return;
+    acc += dt;
+    while (acc >= step && state === "play") { acc -= step; tick(); }
+  }
+  function render() {
+    c.fillStyle = "#080a16"; c.fillRect(0, 0, W, H);
+    GH.text(c, "Score " + score, 16, TOP / 2, 18, "#e8ebff", "left", 700);
+    GH.text(c, "Best " + best, W - 16, TOP / 2, 16, "#8f96bf", "right", 600);
+    c.strokeStyle = "rgba(148,163,255,0.06)"; c.lineWidth = 1;
+    for (var i = 0; i <= N; i++) {
+      c.beginPath(); c.moveTo(i * CS, TOP); c.lineTo(i * CS, H); c.stroke();
+      c.beginPath(); c.moveTo(0, TOP + i * CS); c.lineTo(W, TOP + i * CS); c.stroke();
+    }
+    var r = 6 + Math.sin(pulse * 6) * 1.5;
+    c.shadowBlur = 18; c.shadowColor = "#ff4fa3"; c.fillStyle = "#ff4fa3";
+    c.beginPath(); c.arc(food.x * CS + CS / 2, TOP + food.y * CS + CS / 2, r, 0, Math.PI * 2); c.fill();
+    c.shadowColor = "#40e0ff";
+    snake.forEach(function (s, i) {
+      var t = i / snake.length;
+      c.shadowBlur = i === 0 ? 18 : 8;
+      c.fillStyle = "rgb(" + Math.round(64 + 75 * t) + "," + Math.round(224 - 117 * t) + ",255)";
+      c.beginPath();
+      c.roundRect(s.x * CS + 2, TOP + s.y * CS + 2, CS - 4, CS - 4, i === 0 ? 8 : 6);
+      c.fill();
+    });
+    c.shadowBlur = 0;
+    sparks.forEach(function (p) {
+      c.globalAlpha = p.life * 2; c.fillStyle = "#ffc857"; c.fillRect(p.x - 2, p.y - 2, 4, 4);
+    });
+    c.globalAlpha = 1;
+    if (state === "ready") GH.card(c, W, H, "Snake", "Arrow keys, WASD or swipe to move", "Press any arrow to start");
+    if (state === "over") GH.card(c, W, H, "Game over", "You scored " + score, "Press Space or tap to play again");
+  }
+
+  window.addEventListener("keydown", function (e) {
+    var k = e.key;
+    var map = { ArrowUp: "up", w: "up", W: "up", ArrowDown: "down", s: "down", S: "down", ArrowLeft: "left", a: "left", A: "left", ArrowRight: "right", d: "right", D: "right" };
+    if (map[k]) { e.preventDefault(); turn(map[k]); }
+    if (k === " " && state !== "play") { e.preventDefault(); if (state === "over") reset(); state = "play"; }
+  });
+  GH.swipe(document.body, turn);
+  cv.addEventListener("click", function () { if (GH.paused) return; if (state === "over") reset(); if (state !== "play") state = "play"; });
+  GH.on("restart", reset);
+  reset();
+  GH.loop(update, render);
+})();
+</script>
+</body>
+</html>

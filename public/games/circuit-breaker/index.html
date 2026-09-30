@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en" data-game="circuit-breaker">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Circuit Breaker | Owais GameHub</title>
+<link rel="stylesheet" href="../_sdk/base.css" />
+<script src="../_sdk/sdk.js"></script>
+</head>
+<style>
+  .lights { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; width: min(88vw, 56vh, 420px); aspect-ratio: 1; margin: 0 auto; }
+  .l { border: 1px solid var(--edge); border-radius: 14px; background: #111533; transition: background .15s, box-shadow .15s; }
+  .l.on { background: radial-gradient(circle at 40% 35%, #b8f4ff, #40e0ff 45%, #1a8fb3); box-shadow: 0 0 24px rgba(64,224,255,.55); border-color: transparent; }
+  .l:active { transform: scale(.96); }
+</style>
+<body>
+<div class="stage">
+  <div class="panel">
+    <h1 class="title">Circuit Breaker</h1>
+    <div class="hud">
+      <div class="stat"><small>Level</small><b id="level">1</b></div>
+      <div class="stat"><small>Moves</small><b id="moves">0</b></div>
+      <div class="stat"><small>Target</small><b id="par">0</b></div>
+      <div class="stat"><small>Best level</small><b id="best">1</b></div>
+    </div>
+    <div class="lights" id="lights" aria-label="Light grid"></div>
+    <p class="msg" id="msg" aria-live="polite">Tapping a light flips it and its four neighbours. Switch every light off.</p>
+    <div class="hud"><button class="btn" id="reset">Reset level</button><button class="btn primary" id="next" hidden>Next level</button></div>
+  </div>
+</div>
+<script>
+(function () {
+  var GH = GameHub, el = document.getElementById("lights");
+  var level, grid, start, moves, par, cells = [], cleared;
+
+  for (var i = 0; i < 25; i++) {
+    var b = document.createElement("button"); b.className = "l"; b.dataset.i = i;
+    b.addEventListener("click", function () { press(+this.dataset.i, true); });
+    el.appendChild(b); cells.push(b);
+  }
+  function flip(g, i) {
+    var r = Math.floor(i / 5), c = i % 5;
+    [[0,0],[1,0],[-1,0],[0,1],[0,-1]].forEach(function (d) {
+      var rr = r + d[0], cc = c + d[1];
+      if (rr >= 0 && rr < 5 && cc >= 0 && cc < 5) g[rr * 5 + cc] = !g[rr * 5 + cc];
+    });
+  }
+  function makeLevel(n) {
+    level = n; par = Math.min(3 + n, 15);
+    var g = Array(25).fill(false), used = {};
+    while (Object.keys(used).length < par) { var i = Math.floor(Math.random() * 25); if (!used[i]) { used[i] = 1; flip(g, i); } }
+    if (g.every(function (v) { return !v; })) return makeLevel(n);
+    start = g.slice(); grid = g; moves = 0; cleared = false;
+    GH.save({ level: level, start: start });
+    document.getElementById("next").hidden = true;
+    document.getElementById("msg").textContent = "Tapping a light flips it and its four neighbours. Switch every light off.";
+    render();
+  }
+  function render() {
+    cells.forEach(function (b, i) { b.classList.toggle("on", grid[i]); b.setAttribute("aria-label", "Light " + (i + 1) + (grid[i] ? " on" : " off")); b.setAttribute("aria-pressed", grid[i]); });
+    document.getElementById("level").textContent = level;
+    document.getElementById("moves").textContent = moves;
+    document.getElementById("par").textContent = par;
+    document.getElementById("best").textContent = Math.max(GH.best() || 1, level);
+  }
+  function press(i) {
+    if (cleared || GH.paused) return;
+    flip(grid, i); moves++;
+    GH.sound(grid[i] ? 660 : 440, 0.04, "triangle", 0.03);
+    if (grid.every(function (v) { return !v; })) {
+      cleared = true; GH.score(level); GH.win(level);
+      document.getElementById("msg").textContent = "Circuit cleared in " + moves + " moves" + (moves <= par ? ", on target." : ".");
+      document.getElementById("next").hidden = false;
+      GH.sound(880, 0.4, "triangle", 0.05, 1320);
+    }
+    render();
+  }
+  document.getElementById("reset").addEventListener("click", function () { grid = start.slice(); moves = 0; cleared = false; document.getElementById("next").hidden = true; render(); });
+  document.getElementById("next").addEventListener("click", function () { makeLevel(level + 1); });
+  GH.on("restart", function () { makeLevel(1); GH.score(0); });
+  var s = GH.load();
+  if (s && s.start) { level = s.level; par = Math.min(3 + level, 15); start = s.start; grid = start.slice(); moves = 0; cleared = false; render(); GH.score(level - 1); }
+  else makeLevel(1);
+})();
+</script>
+</body>
+</html>

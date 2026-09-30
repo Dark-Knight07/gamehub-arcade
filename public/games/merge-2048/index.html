@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en" data-game="merge-2048">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>2048 | Owais GameHub</title>
+<link rel="stylesheet" href="../_sdk/base.css" />
+<script src="../_sdk/sdk.js"></script>
+</head>
+<style>
+  .grid { position: relative; width: min(90vw, 64vh, 460px); aspect-ratio: 1; margin: 0 auto; background: rgba(255,255,255,0.04); border: 1px solid var(--edge); border-radius: 16px; padding: 10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .tile { border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-size: clamp(18px, 6vw, 34px); background: rgba(255,255,255,0.05); font-variant-numeric: tabular-nums; }
+  .tile.new { animation: appear .16s ease-out; }
+  .tile.merged { animation: bump .18s ease-out; }
+  @keyframes appear { from { transform: scale(0.3); opacity: 0; } }
+  @keyframes bump { 50% { transform: scale(1.12); } }
+  .over { position: absolute; inset: 0; border-radius: 16px; background: rgba(6,7,13,0.82); display: none; place-items: center; text-align: center; backdrop-filter: blur(4px); }
+  .over.show { display: grid; }
+  .over h2 { margin: 0 0 12px; font-size: 32px; }
+</style>
+<body>
+<div class="stage">
+  <div class="panel">
+    <h1 class="title">2048</h1>
+    <div class="hud">
+      <div class="stat"><small>Score</small><b id="score">0</b></div>
+      <div class="stat"><small>Best</small><b id="best">0</b></div>
+      <button class="btn" id="new">New game</button>
+    </div>
+    <div class="grid" id="grid" aria-label="2048 board">
+      <div class="over" id="over"><div><h2 id="overTitle">No moves left</h2><button class="btn primary" id="overBtn">Try again</button></div></div>
+    </div>
+    <p class="msg">Use arrow keys, WASD, or swipe. Merge matching tiles to reach 2048. Your game is saved automatically.</p>
+  </div>
+</div>
+<script>
+(function () {
+  var GH = GameHub, gridEl = document.getElementById("grid"), overEl = document.getElementById("over");
+  var COLORS = { 2: ["#1c2146", "#cfd6ff"], 4: ["#232a5c", "#dbe1ff"], 8: ["#2b4fd6", "#fff"], 16: ["#3a6dff", "#fff"], 32: ["#40b6ff", "#04121f"], 64: ["#40e0ff", "#04121f"],
+    128: ["#8b6bff", "#fff"], 256: ["#a45bff", "#fff"], 512: ["#d152ff", "#fff"], 1024: ["#ff4fa3", "#fff"], 2048: ["#ffc857", "#1b1200"] };
+  var board, score, won, keepGoing, fresh = [], merged = [], els = [];
+  for (var i = 0; i < 16; i++) { var d = document.createElement("div"); d.className = "tile"; gridEl.insertBefore(d, overEl); els.push(d); }
+
+  function empty() { var e = []; board.forEach(function (v, i) { if (!v) e.push(i); }); return e; }
+  function addTile() { var e = empty(); if (!e.length) return; var i = e[Math.floor(Math.random() * e.length)]; board[i] = Math.random() < 0.9 ? 2 : 4; fresh.push(i); }
+  function newGame() {
+    board = Array(16).fill(0); score = 0; won = false; keepGoing = false; fresh = []; merged = [];
+    addTile(); addTile(); overEl.classList.remove("show"); save(); render(); GH.score(0);
+  }
+  function save() { GH.save({ board: board, score: score, won: won, keepGoing: keepGoing }); }
+  function render() {
+    els.forEach(function (el, i) {
+      var v = board[i], col = COLORS[v] || ["#ffe08a", "#1b1200"];
+      el.textContent = v || "";
+      el.style.background = v ? col[0] : "";
+      el.style.color = v ? col[1] : "";
+      el.style.boxShadow = v >= 64 ? "0 0 22px " + col[0] + "88" : "";
+      el.style.fontSize = v >= 1024 ? "clamp(14px,4.6vw,26px)" : "";
+      el.className = "tile" + (fresh.indexOf(i) >= 0 ? " new" : merged.indexOf(i) >= 0 ? " merged" : "");
+    });
+    document.getElementById("score").textContent = score;
+    var b = GH.best() || 0; document.getElementById("best").textContent = Math.max(b, score);
+  }
+  function line(idx) { return idx.map(function (i) { return board[i]; }); }
+  function move(dir) {
+    if (GH.paused || overEl.classList.contains("show")) return;
+    var moved = false; fresh = []; merged = [];
+    for (var k = 0; k < 4; k++) {
+      var idx = [];
+      for (var j = 0; j < 4; j++) {
+        if (dir === "left") idx.push(k * 4 + j);
+        if (dir === "right") idx.push(k * 4 + 3 - j);
+        if (dir === "up") idx.push(j * 4 + k);
+        if (dir === "down") idx.push((3 - j) * 4 + k);
+      }
+      var vals = line(idx).filter(Boolean), out = [];
+      for (var m = 0; m < vals.length; m++) {
+        if (vals[m] === vals[m + 1]) { var v = vals[m] * 2; out.push(v); score += v; merged.push(idx[out.length - 1]); if (v === 2048 && !won) won = true; m++; }
+        else out.push(vals[m]);
+      }
+      while (out.length < 4) out.push(0);
+      idx.forEach(function (i, n) { if (board[i] !== out[n]) moved = true; board[i] = out[n]; });
+    }
+    if (!moved) return;
+    GH.sound(merged.length ? 520 + merged.length * 80 : 300, 0.05, "triangle", 0.03);
+    addTile(); GH.score(score); save(); render();
+    if (won && !keepGoing) { keepGoing = true; save(); GH.win(score); showOver("You reached 2048", "Keep playing"); GH.sound(880, 0.4, "triangle", 0.05, 1320); return; }
+    if (!canMove()) { GH.gameOver(score); GH.clearSave(); showOver("No moves left", "Try again"); GH.sound(200, 0.4, "sawtooth", 0.04, 80); render(); }
+  }
+  function canMove() {
+    if (empty().length) return true;
+    for (var i = 0; i < 16; i++) {
+      if (i % 4 < 3 && board[i] === board[i + 1]) return true;
+      if (i < 12 && board[i] === board[i + 4]) return true;
+    }
+    return false;
+  }
+  function showOver(title, btn) {
+    document.getElementById("overTitle").textContent = title;
+    document.getElementById("overBtn").textContent = btn;
+    overEl.classList.add("show");
+  }
+  document.getElementById("overBtn").addEventListener("click", function () {
+    if (canMove() && keepGoing && score > 0 && document.getElementById("overBtn").textContent === "Keep playing") overEl.classList.remove("show");
+    else newGame();
+  });
+  document.getElementById("new").addEventListener("click", newGame);
+  var km = { ArrowLeft: "left", a: "left", ArrowRight: "right", d: "right", ArrowUp: "up", w: "up", ArrowDown: "down", s: "down" };
+  window.addEventListener("keydown", function (e) { if (km[e.key]) { e.preventDefault(); move(km[e.key]); } });
+  GH.swipe(document.body, move);
+  GH.on("restart", newGame);
+  var saved = GH.load();
+  if (saved && saved.board && saved.board.length === 16) { board = saved.board; score = saved.score; won = saved.won; keepGoing = saved.keepGoing; render(); GH.score(score); }
+  else newGame();
+})();
+</script>
+</body>
+</html>

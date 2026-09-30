@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en" data-game="memory-match">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Memory Match | Owais GameHub</title>
+<link rel="stylesheet" href="../_sdk/base.css" />
+<script src="../_sdk/sdk.js"></script>
+</head>
+<style>
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; width: min(90vw, 58vh, 440px); margin: 0 auto; perspective: 900px; }
+  .card { aspect-ratio: 1; border: 0; padding: 0; background: none; position: relative; transform-style: preserve-3d; transition: transform .35s cubic-bezier(.2,.7,.2,1); }
+  .card.up, .card.done { transform: rotateY(180deg); }
+  .face { position: absolute; inset: 0; border-radius: 12px; backface-visibility: hidden; display: grid; place-items: center; }
+  .back { background: linear-gradient(135deg, #1b2150, #2a1f5c); border: 1px solid var(--edge); }
+  .back::after { content: ""; width: 34%; aspect-ratio: 1; border-radius: 50%; border: 2px solid rgba(64,224,255,.45); }
+  .front { transform: rotateY(180deg); background: #0f1330; border: 1px solid var(--edge); }
+  .front svg { width: 56%; height: 56%; }
+  .card.done .front { border-color: var(--lime); box-shadow: 0 0 18px rgba(157,255,106,.3); }
+  .levels { display: flex; gap: 8px; justify-content: center; }
+</style>
+<body>
+<div class="stage">
+  <div class="panel">
+    <h1 class="title">Memory Match</h1>
+    <div class="hud">
+      <div class="stat"><small>Moves</small><b id="moves">0</b></div>
+      <div class="stat"><small>Time</small><b id="time">0:00</b></div>
+      <div class="stat"><small>Best (moves)</small><b id="best">–</b></div>
+    </div>
+    <div class="cards" id="cards" aria-label="Memory cards"></div>
+    <p class="msg" id="msg" aria-live="polite">Flip two cards at a time and find all 8 pairs.</p>
+    <div class="hud"><button class="btn primary" id="new">Shuffle and restart</button></div>
+  </div>
+</div>
+<script>
+(function () {
+  var GH = GameHub; GH.config({ lowerIsBetter: true });
+  var ICONS = [
+    ["#40e0ff", '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="12" cy="12" r="3" fill="currentColor"/>'],
+    ["#ff4fa3", '<path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z" fill="currentColor"/>'],
+    ["#9dff6a", '<path d="M12 3l9 16H3z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/>'],
+    ["#ffc857", '<path d="M13 2L4 14h7l-1 8 9-12h-7z" fill="currentColor"/>'],
+    ["#8b6bff", '<rect x="5" y="5" width="14" height="14" rx="2" transform="rotate(45 12 12)" fill="currentColor"/>'],
+    ["#ff7a6b", '<path d="M12 21s-8-5.2-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 5.8-8 11-8 11z" fill="currentColor"/>'],
+    ["#6bf2c4", '<path d="M4 12h16M12 4v16" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>'],
+    ["#e8ebff", '<path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="currentColor"/>']
+  ];
+  var el = document.getElementById("cards"), deck, open, matched, moves, seconds, timer, lock, started;
+
+  function fmt(s) { return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+  function shuffle(a) { for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function newGame() {
+    clearInterval(timer);
+    deck = shuffle([0,1,2,3,4,5,6,7,0,1,2,3,4,5,6,7]);
+    open = []; matched = 0; moves = 0; seconds = 0; lock = false; started = false;
+    el.innerHTML = "";
+    deck.forEach(function (icon, i) {
+      var b = document.createElement("button");
+      b.className = "card"; b.setAttribute("aria-label", "Hidden card " + (i + 1));
+      b.innerHTML = '<span class="face back"></span><span class="face front" style="color:' + ICONS[icon][0] + '"><svg viewBox="0 0 24 24" aria-hidden="true">' + ICONS[icon][1] + "</svg></span>";
+      b.addEventListener("click", function () { flip(b, i); });
+      el.appendChild(b);
+    });
+    var best = GH.best(); document.getElementById("best").textContent = best === null ? "–" : best;
+    document.getElementById("msg").textContent = "Flip two cards at a time and find all 8 pairs.";
+    update(); GH.score(0);
+  }
+  function update() {
+    document.getElementById("moves").textContent = moves;
+    document.getElementById("time").textContent = fmt(seconds);
+  }
+  function flip(b, i) {
+    if (lock || GH.paused || b.classList.contains("up") || b.classList.contains("done")) return;
+    if (!started) { started = true; timer = setInterval(function () { if (!GH.paused) { seconds++; update(); } }, 1000); }
+    b.classList.add("up"); b.setAttribute("aria-label", "Card " + (i + 1) + " revealed");
+    GH.sound(500, 0.04, "sine", 0.03);
+    open.push({ b: b, i: i });
+    if (open.length < 2) return;
+    moves++; update(); GH.score(moves);
+    var a = open[0], c = open[1];
+    if (deck[a.i] === deck[c.i]) {
+      a.b.classList.add("done"); c.b.classList.add("done"); open = []; matched++;
+      GH.sound(760, 0.12, "triangle", 0.05, 1140);
+      if (matched === 8) {
+        clearInterval(timer);
+        var r = GH.win(moves);
+        document.getElementById("best").textContent = r.best;
+        document.getElementById("msg").textContent = "All pairs found in " + moves + " moves and " + fmt(seconds) + (r.isNew ? ". New best!" : ".");
+      }
+    } else {
+      lock = true;
+      setTimeout(function () { a.b.classList.remove("up"); c.b.classList.remove("up"); open = []; lock = false; }, 750);
+    }
+  }
+  document.getElementById("new").addEventListener("click", newGame);
+  GH.on("restart", newGame);
+  newGame();
+})();
+</script>
+</body>
+</html>

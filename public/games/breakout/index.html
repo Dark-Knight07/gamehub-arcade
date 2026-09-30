@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en" data-game="breakout">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Breakout | Owais GameHub</title>
+<link rel="stylesheet" href="../_sdk/base.css" />
+<script src="../_sdk/sdk.js"></script>
+</head>
+<body>
+<div class="stage"><canvas id="c" aria-label="Breakout game"></canvas></div>
+<script>
+(function () {
+  var GH = GameHub, cv = document.getElementById("c"), W = 480, H = 660, c = GH.fit(cv, W, H);
+  var COLS = 8, ROWS = 6, BW = 52, BH = 20, GAP = 6, TOP = 90;
+  var COLORS = ["#ff4fa3", "#ff7a6b", "#ffc857", "#9dff6a", "#40e0ff", "#8b6bff"];
+  var paddle, ball, bricks, lives, score, level, state, keys = {}, sparks = [], best;
+
+  function buildLevel() {
+    bricks = [];
+    var ox = (W - (COLS * BW + (COLS - 1) * GAP)) / 2;
+    for (var r = 0; r < ROWS; r++) for (var col = 0; col < COLS; col++) {
+      var hp = level >= 3 && r < 2 ? 2 : 1;
+      if (level >= 2 && (r + col) % 7 === 0 && r > 1) continue;
+      bricks.push({ x: ox + col * (BW + GAP), y: TOP + r * (BH + GAP), w: BW, h: BH, hp: hp, color: COLORS[r], points: (ROWS - r) * 10 });
+    }
+  }
+  function resetBall() {
+    ball = { x: paddle.x + paddle.w / 2, y: paddle.y - 9, r: 8, vx: 0, vy: 0, stuck: true, speed: 360 + level * 30 };
+  }
+  function reset() {
+    paddle = { x: W / 2 - 48, y: H - 50, w: 96, h: 14 };
+    lives = 3; score = 0; level = 1; state = "ready"; sparks = []; best = GH.best() || 0;
+    buildLevel(); resetBall(); GH.score(0);
+  }
+  function launch() {
+    if (GH.paused) return;
+    if (state === "over" || state === "won") reset();
+    if (!ball.stuck) return;
+    state = "play"; ball.stuck = false;
+    var a = GH.rand(-0.4, 0.4);
+    ball.vx = Math.sin(a) * ball.speed; ball.vy = -Math.cos(a) * ball.speed;
+    GH.sound(520, 0.06, "square", 0.04);
+  }
+  function burst(x, y, color) {
+    for (var i = 0; i < 10; i++) sparks.push({ x: x, y: y, vx: GH.rand(-160, 160), vy: GH.rand(-160, 160), life: 0.45, color: color });
+  }
+  function update(dt) {
+    sparks.forEach(function (p) { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; });
+    sparks = sparks.filter(function (p) { return p.life > 0; });
+    if (keys.left) paddle.x -= 520 * dt;
+    if (keys.right) paddle.x += 520 * dt;
+    paddle.x = Math.max(0, Math.min(W - paddle.w, paddle.x));
+    if (ball.stuck) { ball.x = paddle.x + paddle.w / 2; ball.y = paddle.y - ball.r - 1; return; }
+    var steps = 3;
+    for (var s = 0; s < steps; s++) moveBall(dt / steps);
+  }
+  function moveBall(dt) {
+    ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+    if (ball.x < ball.r) { ball.x = ball.r; ball.vx = Math.abs(ball.vx); GH.sound(300, 0.03, "sine", 0.03); }
+    if (ball.x > W - ball.r) { ball.x = W - ball.r; ball.vx = -Math.abs(ball.vx); GH.sound(300, 0.03, "sine", 0.03); }
+    if (ball.y < 60 + ball.r) { ball.y = 60 + ball.r; ball.vy = Math.abs(ball.vy); GH.sound(300, 0.03, "sine", 0.03); }
+    if (ball.vy > 0 && ball.y + ball.r >= paddle.y && ball.y + ball.r <= paddle.y + paddle.h + 8 &&
+        ball.x >= paddle.x - ball.r && ball.x <= paddle.x + paddle.w + ball.r) {
+      var off = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+      var ang = Math.max(-1, Math.min(1, off)) * 1.05;
+      ball.vx = Math.sin(ang) * ball.speed; ball.vy = -Math.cos(ang) * ball.speed;
+      ball.y = paddle.y - ball.r;
+      GH.sound(440, 0.05, "square", 0.04);
+    }
+    for (var i = 0; i < bricks.length; i++) {
+      var b = bricks[i];
+      var cx = Math.max(b.x, Math.min(ball.x, b.x + b.w)), cy = Math.max(b.y, Math.min(ball.y, b.y + b.h));
+      var dx = ball.x - cx, dy = ball.y - cy;
+      if (dx * dx + dy * dy <= ball.r * ball.r) {
+        if (Math.abs(dx) > Math.abs(dy)) ball.vx = dx > 0 ? Math.abs(ball.vx) : -Math.abs(ball.vx);
+        else ball.vy = dy > 0 ? Math.abs(ball.vy) : -Math.abs(ball.vy);
+        b.hp--;
+        if (b.hp <= 0) {
+          bricks.splice(i, 1); score += b.points; GH.score(score); burst(b.x + b.w / 2, b.y + b.h / 2, b.color);
+          GH.sound(700 + Math.random() * 200, 0.06, "triangle", 0.05);
+        } else GH.sound(250, 0.05, "square", 0.04);
+        break;
+      }
+    }
+    if (bricks.length === 0) {
+      level++;
+      if (level > 5) { state = "won"; best = GH.win(score).best; ball.stuck = true; GH.sound(880, 0.4, "triangle", 0.05, 1320); return; }
+      buildLevel(); resetBall(); state = "ready"; GH.sound(660, 0.3, "triangle", 0.05, 990);
+    }
+    if (ball.y > H + 20) {
+      lives--;
+      GH.sound(180, 0.3, "sawtooth", 0.05, 60);
+      if (lives <= 0) { state = "over"; best = GH.gameOver(score).best; }
+      else state = "ready";
+      resetBall();
+    }
+  }
+  function render() {
+    c.fillStyle = "#080a16"; c.fillRect(0, 0, W, H);
+    GH.text(c, "Score " + score, 16, 30, 18, "#e8ebff", "left", 700);
+    GH.text(c, "Level " + Math.min(level, 5), W / 2, 30, 16, "#8f96bf", "center", 600);
+    for (var i = 0; i < lives; i++) { c.fillStyle = "#ff4fa3"; c.beginPath(); c.arc(W - 22 - i * 22, 30, 6, 0, Math.PI * 2); c.fill(); }
+    c.fillStyle = "rgba(148,163,255,0.12)"; c.fillRect(0, 58, W, 2);
+    bricks.forEach(function (b) {
+      c.shadowBlur = 12; c.shadowColor = b.color; c.fillStyle = b.color;
+      c.globalAlpha = b.hp > 1 ? 1 : 0.88;
+      c.beginPath(); c.roundRect(b.x, b.y, b.w, b.h, 5); c.fill();
+      if (b.hp > 1) { c.shadowBlur = 0; c.strokeStyle = "#fff"; c.lineWidth = 2; c.stroke(); }
+    });
+    c.globalAlpha = 1;
+    c.shadowBlur = 16; c.shadowColor = "#40e0ff";
+    var g = c.createLinearGradient(paddle.x, 0, paddle.x + paddle.w, 0);
+    g.addColorStop(0, "#40e0ff"); g.addColorStop(1, "#8b6bff");
+    c.fillStyle = g; c.beginPath(); c.roundRect(paddle.x, paddle.y, paddle.w, paddle.h, 7); c.fill();
+    c.shadowColor = "#fff"; c.fillStyle = "#fff"; c.beginPath(); c.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2); c.fill();
+    c.shadowBlur = 0;
+    sparks.forEach(function (p) { c.globalAlpha = p.life * 2; c.fillStyle = p.color; c.fillRect(p.x - 2, p.y - 2, 4, 4); });
+    c.globalAlpha = 1;
+    if (state === "ready" && ball.stuck && lives === 3 && score === 0 && level === 1) GH.card(c, W, H, "Breakout", "Move with mouse, touch, or arrow keys", "Click, tap or press Space to launch");
+    else if (state === "ready") GH.text(c, "Tap or press Space to launch", W / 2, H / 2 + 60, 15, "#40e0ff");
+    if (state === "over") GH.card(c, W, H, "Game over", "Final score " + score + "   Best " + best, "Tap or press Space to play again");
+    if (state === "won") GH.card(c, W, H, "You cleared every level", "Final score " + score, "Tap or press Space to play again");
+  }
+  function pointerMove(e) {
+    if (GH.paused) return;
+    var p = GH.point(cv, e); paddle.x = p.x - paddle.w / 2;
+  }
+  cv.addEventListener("mousemove", pointerMove);
+  cv.addEventListener("touchmove", function (e) { e.preventDefault(); pointerMove(e); }, { passive: false });
+  cv.addEventListener("touchstart", function (e) { e.preventDefault(); pointerMove(e); launch(); }, { passive: false });
+  cv.addEventListener("mousedown", launch);
+  window.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowLeft" || e.key === "a") keys.left = true;
+    if (e.key === "ArrowRight" || e.key === "d") keys.right = true;
+    if (e.key === " " || e.key === "ArrowUp") { e.preventDefault(); launch(); }
+  });
+  window.addEventListener("keyup", function (e) {
+    if (e.key === "ArrowLeft" || e.key === "a") keys.left = false;
+    if (e.key === "ArrowRight" || e.key === "d") keys.right = false;
+  });
+  GH.on("pause", function () { keys = {}; });
+  GH.on("restart", reset);
+  reset();
+  GH.loop(update, render);
+})();
+</script>
+</body>
+</html>

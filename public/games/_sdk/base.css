@@ -1,0 +1,29 @@
+/* Shared look for every Owais GameHub game */
+:root {
+  --bg: #06070d; --panel: #11142a; --edge: rgba(148, 163, 255, 0.18);
+  --ink: #e8ebff; --dim: #8f96bf; --cyan: #40e0ff; --violet: #8b6bff; --rose: #ff4fa3; --lime: #9dff6a; --amber: #ffc857;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 0%, #151a3a 0%, var(--bg) 70%); color: var(--ink);
+  font-family: "Sora Variable", "Segoe UI", system-ui, sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; touch-action: none; }
+.stage { position: fixed; inset: 0; display: grid; place-items: center; }
+canvas { display: block; border-radius: 10px; box-shadow: 0 0 0 1px var(--edge), 0 30px 80px -30px rgba(64, 224, 255, 0.35); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.btn { border: 1px solid var(--edge); background: rgba(255, 255, 255, 0.05); padding: 10px 18px; border-radius: 10px; font-weight: 600; }
+.btn:hover { border-color: var(--cyan); }
+.btn.primary { background: linear-gradient(135deg, var(--cyan), var(--violet)); border: 0; color: #050612; }
+.btn.on { border-color: var(--cyan); background: rgba(64, 224, 255, 0.12); }
+.hud { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.stat { background: rgba(255, 255, 255, 0.04); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 14px; text-align: center; min-width: 84px; }
+.stat small { display: block; color: var(--dim); font-size: 11px; letter-spacing: .04em; }
+.stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.msg { min-height: 24px; text-align: center; color: var(--dim); font-size: 14px; }
+.panel { width: min(96vw, 560px); display: grid; gap: 16px; padding: 16px; }
+.title { margin: 0; text-align: center; font-size: 22px; letter-spacing: .02em; }
+.ogh-pause { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center;
+  background: rgba(6, 7, 13, 0.82); backdrop-filter: blur(6px); z-index: 99; cursor: pointer; }
+.ogh-pause strong { font-size: 32px; }
+.ogh-pause p { color: var(--dim); margin: 8px 0 0; }
+.ogh-pause .ogh-keys { font-size: 13px; }
+@media (max-height: 520px) { .panel { gap: 10px; padding: 8px; } .stat b { font-size: 16px; } }

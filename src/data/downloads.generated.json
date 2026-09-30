@@ -1,0 +1,58 @@
+{
+  "breakout": {
+    "file": "/downloads/owais-gamehub-breakout.html",
+    "bytes": 19488
+  },
+  "circuit-breaker": {
+    "file": "/downloads/owais-gamehub-circuit-breaker.html",
+    "bytes": 16212
+  },
+  "memory-match": {
+    "file": "/downloads/owais-gamehub-memory-match.html",
+    "bytes": 17574
+  },
+  "merge-2048": {
+    "file": "/downloads/owais-gamehub-merge-2048.html",
+    "bytes": 18381
+  },
+  "mine-grid": {
+    "file": "/downloads/owais-gamehub-mine-grid.html",
+    "bytes": 20044
+  },
+  "neon-glide": {
+    "file": "/downloads/owais-gamehub-neon-glide.html",
+    "bytes": 17129
+  },
+  "neon-pong": {
+    "file": "/downloads/owais-gamehub-neon-pong.html",
+    "bytes": 19583
+  },
+  "night-circuit": {
+    "file": "/downloads/owais-gamehub-night-circuit.html",
+    "bytes": 18049
+  },
+  "pulse-runner": {
+    "file": "/downloads/owais-gamehub-pulse-runner.html",
+    "bytes": 18218
+  },
+  "slide-puzzle": {
+    "file": "/downloads/owais-gamehub-slide-puzzle.html",
+    "bytes": 18108
+  },
+  "snake": {
+    "file": "/downloads/owais-gamehub-snake.html",
+    "bytes": 16777
+  },
+  "star-sentinel": {
+    "file": "/downloads/owais-gamehub-star-sentinel.html",
+    "bytes": 20837
+  },
+  "sudoku": {
+    "file": "/downloads/owais-gamehub-sudoku.html",
+    "bytes": 20498
+  },
+  "tic-tac-toe": {
+    "file": "/downloads/owais-gamehub-tic-tac-toe.html",
+    "bytes": 18413
+  }
+}
